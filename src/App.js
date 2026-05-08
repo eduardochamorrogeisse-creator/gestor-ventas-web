@@ -9,7 +9,11 @@ import {
 
 import {
   collection,
-  onSnapshot
+  onSnapshot,
+  doc,
+  getDoc,
+  addDoc,
+  serverTimestamp
 } from "firebase/firestore";
 
 import { auth, db } from "./firebase";
@@ -23,6 +27,14 @@ function App() {
   const [ventas, setVentas] = useState([]);
 
   const [loading, setLoading] = useState(true);
+
+  const [configuracion, setConfiguracion] = useState(null);
+  const [sucursales, setSucursales] = useState(["Lebu", "Los Álamos", "Cañete"]);
+  const [tiposVenta, setTiposVenta] = useState(["Boleta", "Factura"]);
+
+  const [total, setTotal] = useState("");
+  const [sucursalSeleccionada, setSucursalSeleccionada] = useState("Lebu");
+  const [tipoSeleccionado, setTipoSeleccionado] = useState("Boleta");
 
   // Detectar sesión
   useEffect(() => {
@@ -62,6 +74,43 @@ function App() {
 
   }, [usuario]);
 
+  // Cargar configuración dinámica
+  useEffect(() => {
+
+    if (!usuario) return;
+
+    const cargarConfiguracion = async () => {
+      try {
+        const docRef = doc(db, "configuracion", "general");
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setConfiguracion(data);
+
+          if (data.sucursales && Array.isArray(data.sucursales)) {
+            setSucursales(data.sucursales);
+            setSucursalSeleccionada(data.sucursales[0]);
+          }
+
+          if (data.tiposVenta && Array.isArray(data.tiposVenta)) {
+            setTiposVenta(data.tiposVenta);
+            setTipoSeleccionado(data.tiposVenta[0]);
+          }
+
+          console.log("Configuración cargada desde Firestore:", data);
+        } else {
+          console.log("No existe el documento de configuración. Usando defaults.");
+        }
+      } catch (error) {
+        console.error("Error al cargar configuración:", error);
+      }
+    };
+
+    cargarConfiguracion();
+
+  }, [usuario]);
+
   // Login con Google
   const iniciarSesion = async () => {
 
@@ -86,6 +135,34 @@ function App() {
 
     await signOut(auth);
 
+  };
+
+  // Guardar venta
+  const guardarVenta = async (e) => {
+    e.preventDefault();
+
+    if (!total || isNaN(total)) {
+      alert("Por favor ingrese un total válido");
+      return;
+    }
+
+    try {
+      await addDoc(collection(db, "ventas"), {
+        fecha: serverTimestamp(),
+        lastUpdated: serverTimestamp(),
+        sucursal: sucursalSeleccionada,
+        tipo: tipoSeleccionado,
+        total: Number(total),
+        usuario: usuario.displayName || usuario.email,
+        usuarioId: usuario.uid
+      });
+
+      setTotal("");
+      alert("Venta registrada");
+    } catch (error) {
+      console.error("Error al guardar venta:", error);
+      alert("Error al registrar la venta");
+    }
   };
 
   // Loading
@@ -158,6 +235,67 @@ function App() {
       </header>
 
       <main style={{ padding: 20 }}>
+
+        <section style={{
+          marginBottom: 40,
+          padding: 20,
+          border: "1px solid #ccc",
+          borderRadius: 8,
+          background: "#fff",
+          color: "#333",
+          maxWidth: 400
+        }}>
+          <h3>Registrar Nueva Venta</h3>
+          <form onSubmit={guardarVenta} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+
+            <label>Total:</label>
+            <input
+              type="number"
+              value={total}
+              onChange={(e) => setTotal(e.target.value)}
+              placeholder="Ej: 5000"
+              style={{ padding: 8 }}
+              required
+            />
+
+            <label>Sucursal:</label>
+            <select
+              value={sucursalSeleccionada}
+              onChange={(e) => setSucursalSeleccionada(e.target.value)}
+              style={{ padding: 8 }}
+            >
+              {sucursales.map((s, index) => (
+                <option key={index} value={s}>{s}</option>
+              ))}
+            </select>
+
+            <label>Tipo de Venta:</label>
+            <select
+              value={tipoSeleccionado}
+              onChange={(e) => setTipoSeleccionado(e.target.value)}
+              style={{ padding: 8 }}
+            >
+              {tiposVenta.map((t, index) => (
+                <option key={index} value={t}>{t}</option>
+              ))}
+            </select>
+
+            <button
+              type="submit"
+              style={{
+                marginTop: 10,
+                padding: 10,
+                cursor: "pointer",
+                background: "#28a745",
+                color: "white",
+                border: "none",
+                borderRadius: 4
+              }}
+            >
+              Guardar Venta
+            </button>
+          </form>
+        </section>
 
         <h2>Ventas</h2>
 
