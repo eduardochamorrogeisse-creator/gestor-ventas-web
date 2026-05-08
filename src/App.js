@@ -12,6 +12,7 @@ import {
   onSnapshot,
   doc,
   getDoc,
+  setDoc,
   addDoc,
   serverTimestamp
 } from "firebase/firestore";
@@ -28,13 +29,12 @@ function App() {
 
   const [loading, setLoading] = useState(true);
 
-  const [configuracion, setConfiguracion] = useState(null);
   const [sucursales, setSucursales] = useState(["Lebu", "Los Álamos", "Cañete"]);
-  const [tiposVenta, setTiposVenta] = useState(["Boleta", "Factura"]);
+  const [tiposVenta, setTiposVenta] = useState(["S/B", "Boleta", "Factura", "Transferencia", "Debito/Credito"]);
 
   const [total, setTotal] = useState("");
   const [sucursalSeleccionada, setSucursalSeleccionada] = useState("Lebu");
-  const [tipoSeleccionado, setTipoSeleccionado] = useState("Boleta");
+  const [tipoSeleccionado, setTipoSeleccionado] = useState("S/B");
 
   // Detectar sesión
   useEffect(() => {
@@ -74,40 +74,59 @@ function App() {
 
   }, [usuario]);
 
-  // Cargar configuración dinámica
+  // Cargar configuración desde catálogos centralizados
   useEffect(() => {
 
     if (!usuario) return;
 
-    const cargarConfiguracion = async () => {
+    const cargarCatalogos = async () => {
       try {
-        const docRef = doc(db, "configuracion", "general");
-        const docSnap = await getDoc(docRef);
+        // 1. Cargar Sucursales
+        const sucursalesRef = doc(db, "catalogos", "sucursales");
+        const sucursalesSnap = await getDoc(sucursalesRef);
 
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setConfiguracion(data);
-
-          if (data.sucursales && Array.isArray(data.sucursales)) {
-            setSucursales(data.sucursales);
-            setSucursalSeleccionada(data.sucursales[0]);
+        if (sucursalesSnap.exists()) {
+          const data = sucursalesSnap.data();
+          if (data.items && Array.isArray(data.items)) {
+            setSucursales(data.items);
+            setSucursalSeleccionada(data.items[0]);
+            console.log("Catálogo de sucursales cargado:", data.items);
           }
-
-          if (data.tiposVenta && Array.isArray(data.tiposVenta)) {
-            setTiposVenta(data.tiposVenta);
-            setTipoSeleccionado(data.tiposVenta[0]);
-          }
-
-          console.log("Configuración cargada desde Firestore:", data);
         } else {
-          console.log("No existe el documento de configuración. Usando defaults.");
+          // Crear catálogo inicial si no existe
+          const defaultSucursales = ["Lebu", "Los Álamos", "Cañete"];
+          await setDoc(sucursalesRef, { items: defaultSucursales });
+          setSucursales(defaultSucursales);
+          setSucursalSeleccionada(defaultSucursales[0]);
+          console.log("Catálogo de sucursales creado con valores iniciales.");
         }
+
+        // 2. Cargar Tipos de Venta
+        const tiposRef = doc(db, "catalogos", "tipos_venta");
+        const tiposSnap = await getDoc(tiposRef);
+
+        if (tiposSnap.exists()) {
+          const data = tiposSnap.data();
+          if (data.items && Array.isArray(data.items)) {
+            setTiposVenta(data.items);
+            setTipoSeleccionado(data.items[0]);
+            console.log("Catálogo de tipos de venta cargado:", data.items);
+          }
+        } else {
+          // Crear catálogo inicial si no existe
+          const defaultTipos = ["S/B", "Boleta", "Factura", "Transferencia", "Debito/Credito"];
+          await setDoc(tiposRef, { items: defaultTipos });
+          setTiposVenta(defaultTipos);
+          setTipoSeleccionado(defaultTipos[0]);
+          console.log("Catálogo de tipos de venta creado con valores iniciales.");
+        }
+
       } catch (error) {
-        console.error("Error al cargar configuración:", error);
+        console.error("Error al gestionar catálogos:", error);
       }
     };
 
-    cargarConfiguracion();
+    cargarCatalogos();
 
   }, [usuario]);
 
@@ -149,7 +168,7 @@ function App() {
     try {
       await addDoc(collection(db, "ventas"), {
         fecha: serverTimestamp(),
-        lastUpdated: serverTimestamp(),
+        lastUpdated: Date.now(),
         sucursal: sucursalSeleccionada,
         tipo: tipoSeleccionado,
         total: Number(total),
