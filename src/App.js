@@ -165,12 +165,23 @@ function App() {
       return;
     }
 
+    // Normalización exacta para compatibilidad con Android
+    const sucursalNormalizada = sucursalSeleccionada.trim();
+    const tipoNormalizado = tipoSeleccionado.trim();
+
+    // Formato manual dd/MM/yyyy para asegurar barras '/' requeridas por Android
+    const hoy = new Date();
+    const fechaFormateada =
+      String(hoy.getDate()).padStart(2, '0') + '/' +
+      String(hoy.getMonth() + 1).padStart(2, '0') + '/' +
+      hoy.getFullYear();
+
     try {
       await addDoc(collection(db, "ventas"), {
-        fecha: serverTimestamp(),
+        fecha: fechaFormateada,
         lastUpdated: Date.now(),
-        sucursal: sucursalSeleccionada,
-        tipo: tipoSeleccionado,
+        sucursal: sucursalNormalizada,
+        tipo: tipoNormalizado,
         total: Number(total),
         usuario: usuario.displayName || usuario.email,
         usuarioId: usuario.uid
