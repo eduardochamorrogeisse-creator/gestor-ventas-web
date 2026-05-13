@@ -33,7 +33,6 @@ function App() {
   const [totalGeneral, setTotalGeneral] = useState(0);
   const [fechaCierre, setFechaCierre] = useState("");
 
-  // Formateador de fecha manual dd/MM/yyyy
   const obtenerFechaActual = () => {
     const hoy = new Date();
     return String(hoy.getDate()).padStart(2, '0') + '/' +
@@ -41,28 +40,41 @@ function App() {
            hoy.getFullYear();
   };
 
-  // Detectar sesión y Roles
+  // Función robusta para normalizar fechas (Timestamp o String) a dd/MM/yyyy
+  const formatearFecha = (fechaOriginal) => {
+    if (!fechaOriginal) return "00/00/0000";
+
+    let stringBase = "";
+
+    // Si ya es un String, lo normalizamos (limpiando posibles horas "dd/MM/yyyy HH:mm")
+    if (typeof fechaOriginal === 'string') {
+      stringBase = fechaOriginal;
+    }
+    // Si es un Timestamp de Firestore {seconds, nanoseconds}
+    else if (fechaOriginal.seconds) {
+      const d = new Date(fechaOriginal.seconds * 1000);
+      stringBase = String(d.getDate()).padStart(2, '0') + '/' +
+                   String(d.getMonth() + 1).padStart(2, '0') + '/' +
+                   d.getFullYear();
+    } else {
+      return "Fecha Inválida";
+    }
+
+    // Normalización definitiva: Extraer solo dd/MM/yyyy eliminando horas si existen
+    return stringBase.split(" ")[0].trim();
+  };
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUsuario(user);
       if (user) {
         setFechaCierre(obtenerFechaActual());
-
-        // Leer Roles desde Firestore
         const userRef = doc(db, "usuarios", user.uid);
         const userSnap = await getDoc(userRef);
-
         if (userSnap.exists()) {
           setDatosUsuario(userSnap.data());
         } else {
-          // Crear perfil básico si no existe
-          const perfilBasico = {
-            nombre: user.displayName || "Usuario Nuevo",
-            email: user.email,
-            rol: "vendedor",
-            aprobado: false,
-            activo: true
-          };
+          const perfilBasico = { nombre: user.displayName || "Usuario", email: user.email, rol: "vendedor", aprobado: false, activo: true };
           await setDoc(userRef, perfilBasico);
           setDatosUsuario(perfilBasico);
         }
@@ -72,7 +84,7 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // Cargar Catálogos y Cierres
+  // CARGA DESDE VENTAS Y AGRUPAMIENTO REALTIME
   useEffect(() => {
     if (!usuario) return;
 
@@ -81,16 +93,13 @@ function App() {
         const sRef = doc(db, "catalogos", "sucursales");
         const tRef = doc(db, "catalogos", "tipos_venta");
         const [sSnap, tSnap] = await Promise.all([getDoc(sRef), getDoc(tRef)]);
-
         if (sSnap.exists()) {
-          const items = sSnap.data().items;
-          setSucursales(items);
-          setSucursalSeleccionada(items[0]);
+          setSucursales(sSnap.data().items);
+          setSucursalSeleccionada(sSnap.data().items[0]);
         }
         if (tSnap.exists()) {
           const items = tSnap.data().items;
           setTiposVenta(items);
-          // Inicializar inputs de ventas en 0
           const initialInputs = {};
           items.forEach(t => initialInputs[t] = "");
           setVentasInputs(initialInputs);
@@ -98,21 +107,51 @@ function App() {
       } catch (e) { console.error("Error catálogos:", e); }
     };
 
-    const q = query(collection(db, "cierres_diarios"), orderBy("lastUpdated", "desc"));
-    const unsubCierres = onSnapshot(q, (snap) => {
-      const listaActualizada = snap.docs.map(d => ({
-        id: d.id,
-        ...d.data()
-      }));
-      // Forzar nueva referencia del array para asegurar re-render completo
-      setCierres([...listaActualizada]);
+    const q = query(collection(db, "ventas"), orderBy("lastUpdated", "desc"));
+    const unsubVentas = onSnapshot(q, (snap) => {
+      const ventasRaw = snap.docs.map(d => {
+        const data = d.data();
+        return {
+          id: d.id,
+          ...data,
+          fecha: formatearFecha(data.fecha) // Normalización inmediata
+        };
+      });
+
+      // Agrupar ventas individuales para mostrar como "Cierres" en la UI
+      const grupos = {};
+      ventasRaw.forEach(v => {
+        const key = `${v.fecha}_${v.sucursal}`;
+        if (!grupos[key]) {
+          grupos[key] = {
+            id: key,
+            fecha: v.fecha,
+            sucursal: v.sucursal,
+            ventas: {},
+            usuario: v.usuario || "Desconocido",
+            lastUpdated: v.lastUpdated || 0
+          };
+        }
+
+        // Acumular el monto asegurando que sea numérico y el tipo esté limpio
+        const tipo = String(v.tipo || "Otros").trim();
+        const monto = Number(v.total) || 0;
+
+        grupos[key].ventas[tipo] = (grupos[key].ventas[tipo] || 0) + monto;
+
+        if (v.lastUpdated > grupos[key].lastUpdated) {
+          grupos[key].lastUpdated = v.lastUpdated;
+          grupos[key].usuario = v.usuario;
+        }
+      });
+
+      setCierres(Object.values(grupos).sort((a, b) => b.lastUpdated - a.lastUpdated));
     });
 
     cargarCatalogos();
-    return () => unsubCierres();
+    return () => unsubVentas();
   }, [usuario]);
 
-  // Calcular Total Automáticamente
   useEffect(() => {
     const suma = Object.values(ventasInputs).reduce((acc, val) => acc + (Number(val) || 0), 0);
     setTotalGeneral(suma);
@@ -124,50 +163,51 @@ function App() {
 
   const guardarCierre = async (e) => {
     e.preventDefault();
-    if (totalGeneral === 0) return alert("Por favor, ingrese valores en las ventas.");
+    if (totalGeneral === 0) return alert("Ingrese montos.");
 
     try {
-      // Normalización y Validaciones
-      const ventasFinales = {};
-      tiposVenta.forEach(t => {
-        ventasFinales[t] = Number(ventasInputs[t]) || 0;
-      });
-
-      const sucursalTrim = sucursalSeleccionada.trim();
       const fechaID = fechaCierre.replace(/\//g, "-");
-      const docID = `${fechaID}_${sucursalTrim}`;
+      const promesas = Object.entries(ventasInputs).map(([tipo, valor]) => {
+        const monto = Number(valor) || 0;
+        if (monto === 0) return null;
 
-      await setDoc(doc(db, "cierres_diarios", docID), {
-        fecha: fechaCierre,
-        sucursal: sucursalTrim,
-        ventas: ventasFinales,
-        totalGeneral: totalGeneral,
-        usuario: usuario.displayName || usuario.email,
-        usuarioId: usuario.uid,
-        lastUpdated: Date.now()
+        // ID determinista para evitar duplicados al corregir en la web
+        const docID = `${fechaID}_${sucursalSeleccionada}_${tipo.replace(/\//g, "")}`;
+        return setDoc(doc(db, "ventas", docID), {
+          fecha: fechaCierre,
+          sucursal: sucursalSeleccionada.trim(),
+          tipo: tipo.trim(),
+          total: monto,
+          usuario: usuario.displayName || usuario.email,
+          usuarioId: usuario.uid,
+          lastUpdated: Date.now()
+        });
       });
 
-      alert("Cierre diario guardado exitosamente.");
+      await Promise.all(promesas.filter(p => p !== null));
+      alert("Ventas sincronizadas exitosamente.");
+
+      // Limpiar inputs
+      const reset = {};
+      tiposVenta.forEach(t => reset[t] = "");
+      setVentasInputs(reset);
     } catch (e) {
       console.error(e);
-      alert("Error al guardar el cierre.");
+      alert("Error de permisos o conexión. Verifique su rol.");
     }
   };
 
   const iniciarSesion = async () => {
-    try {
-      await signInWithPopup(auth, new GoogleAuthProvider());
-    } catch (e) { alert("Error al iniciar sesión"); }
+    try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { alert("Error login"); }
   };
 
-  if (loading) return <div className="loader-screen"><h1>Cargando Sistema...</h1></div>;
+  if (loading) return <div className="loader-screen"><h1>Cargando...</h1></div>;
 
   if (!usuario) {
     return (
       <div className="login-page">
         <div className="login-card">
           <h1>Gestor Pro</h1>
-          <p>Inicia sesión para registrar ventas</p>
           <button onClick={iniciarSesion} className="btn-google">Entrar con Google</button>
         </div>
       </div>
@@ -183,41 +223,25 @@ function App() {
           <span className="brand">Sistema de Cierres</span>
           <div className="user-nav">
             <span className="user-role-badge">{datosUsuario?.rol}</span>
-            <span>{usuario.email}</span>
-            <button onClick={() => signOut(auth)} className="btn-logout">Cerrar Sesión</button>
+            <button onClick={() => signOut(auth)} className="btn-logout">Salir</button>
           </div>
         </div>
       </header>
 
       <main className="content-container">
-        {/* Formulario de Cierre */}
         <section className="card form-section">
-          <div className="card-header">
-            <h2>Registrar Cierre Diario</h2>
-            <p>Ingresa los montos correspondientes a cada tipo de venta</p>
-          </div>
-
+          <h2>Registrar Cierre</h2>
           <form onSubmit={guardarCierre}>
             <div className="top-inputs">
               <div className="field">
                 <label>Sucursal</label>
-                <select
-                  value={sucursalSeleccionada}
-                  onChange={(e) => setSucursalSeleccionada(e.target.value)}
-                >
+                <select value={sucursalSeleccionada} onChange={(e) => setSucursalSeleccionada(e.target.value)}>
                   {sucursales.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
-
               <div className="field">
                 <label>Fecha</label>
-                <input
-                  type="text"
-                  value={fechaCierre}
-                  onChange={(e) => setFechaCierre(e.target.value)}
-                  disabled={!puedeEditarFecha}
-                  placeholder="dd/mm/yyyy"
-                />
+                <input type="text" value={fechaCierre} onChange={(e) => setFechaCierre(e.target.value)} disabled={!puedeEditarFecha} />
               </div>
             </div>
 
@@ -225,29 +249,23 @@ function App() {
               {tiposVenta.map(tipo => (
                 <div className="field" key={tipo}>
                   <label>{tipo}</label>
-                  <input
-                    type="number"
-                    placeholder="0"
-                    value={ventasInputs[tipo] || ""}
-                    onChange={(e) => manejarCambioInput(tipo, e.target.value)}
-                  />
+                  <input type="number" placeholder="0" value={ventasInputs[tipo] || ""} onChange={(e) => manejarCambioInput(tipo, e.target.value)} />
                 </div>
               ))}
             </div>
 
             <div className="summary-bar">
               <div className="total-box">
-                <span className="label">Total General:</span>
+                <span className="label">Total:</span>
                 <span className="amount">${totalGeneral.toLocaleString("es-CL")}</span>
               </div>
-              <button type="submit" className="btn-save">Guardar Cierre</button>
+              <button type="submit" className="btn-save">Guardar Todo</button>
             </div>
           </form>
         </section>
 
-        {/* Historial */}
         <section className="history-section">
-          <h2 className="section-title">Historial de Cierres Diarios</h2>
+          <h2 className="section-title">Historial Unificado (Ventas)</h2>
           <div className="history-grid">
             {cierres.map(c => (
               <div className="cierre-card" key={c.id}>
@@ -257,23 +275,19 @@ function App() {
                 </div>
                 <div className="c-card-body">
                   <div className="c-details">
-                    {Object.entries(c.ventas || {}).map(([tipo, valor]) => (
+                    {Object.entries(c.ventas).map(([tipo, valor]) => (
                       <div key={`${c.id}-${tipo}`} className="c-detail-row">
                         <span>{tipo}</span>
-                        <span>${(Number(valor) || 0).toLocaleString("es-CL")}</span>
+                        <span>${Number(valor).toLocaleString("es-CL")}</span>
                       </div>
                     ))}
                   </div>
                   <div className="c-total-row">
                     <span>Total</span>
-                    <strong>
-                      ${Object.values(c.ventas || {}).reduce((acc, v) => acc + (Number(v) || 0), 0).toLocaleString("es-CL")}
-                    </strong>
+                    <strong>${Object.values(c.ventas).reduce((acc, v) => acc + v, 0).toLocaleString("es-CL")}</strong>
                   </div>
                 </div>
-                <div className="c-card-footer">
-                  <span className="c-user">Registrado por: {c.usuario}</span>
-                </div>
+                <div className="c-card-footer">Registrado por: {c.usuario}</div>
               </div>
             ))}
           </div>
