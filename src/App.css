@@ -88,6 +88,7 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow-x: hidden; /* Evita cualquier fuga de scroll horizontal */
 }
 
 .navbar {
@@ -352,7 +353,8 @@ body {
   }
 
   .ventas-inputs-grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr; /* Corregido: de 1fr 1fr a 1fr */
+    padding: 1rem; /* Reducido para ganar espacio */
   }
 
   .nav-container {
@@ -365,11 +367,16 @@ body {
 
   .content-container {
     margin: 1rem auto;
+    padding: 0 1rem; /* Reducido para evitar empuje lateral */
+  }
+
+  .card {
+    padding: 1rem; /* Reducido de 1.5rem */
   }
 
   .summary-bar {
     flex-direction: column;
-    gap: 1rem;
+    gap: 1.5rem;
     align-items: stretch;
     text-align: center;
   }
