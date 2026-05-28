@@ -35,14 +35,18 @@ function App() {
   const [vista, setVista] = useState("ventas");
   const [subVista, setSubVista] = useState("historial");
 
-  // FILTROS HISTORIAL EJECUTIVO
+  // FILTROS Y ESTADOS DE ANÁLISIS
   const [filtroSucursal, setFiltroSucursal] = useState("");
   const [filtroMes, setFiltroMes] = useState("");
   const [filtroUltimos10, setFiltroUltimos10] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
+  const [sucursalDetalle, setSucursalDetalle] = useState(null);
+  const [fechaCalendario, setFechaCalendario] = useState(null);
+  const [mesVista, setMesVista] = useState(new Date()); // Control de mes en calendario
 
   // Catálogos y Datos
   const [sucursales, setSucursales] = useState(["Lebu", "Los Álamos", "Cañete"]);
+  const [sucursalSeleccionada, setSucursalSeleccionada] = useState("");
   const [tiposVenta, setTiposVenta] = useState(["S/B", "Boleta", "Factura", "Transferencia", "Debito/Credito"]);
   const [ventasRaw, setVentasRaw] = useState([]);
 
@@ -58,6 +62,7 @@ function App() {
     promedioDiarioSemanal: 0
   });
 
+  // --- FUNCIONES AUXILIARES (DEFINIDAS ANTES DE SU USO) ---
   const obtenerFechaActual = () => {
     const hoy = new Date();
     return String(hoy.getDate()).padStart(2, '0') + '/' +
@@ -89,28 +94,142 @@ function App() {
       .replace(/[^a-zA-Z0-9]/g, "");
   };
 
+  // --- PROCESAMIENTO DE SUCURSALES WEB 2.0 ---
+  const sucursalesMetricas = useMemo(() => {
+    const ahora = new Date();
+    const añoActual = ahora.getFullYear();
+    const mesActual = ahora.getMonth();
+    const mesAnteriorDate = new Date(añoActual, mesActual - 1, 1);
+    const mesAnterior = mesAnteriorDate.getMonth();
+    const añoMesAnterior = mesAnteriorDate.getFullYear();
+
+    const stats = {};
+    sucursales.forEach(s => {
+      stats[s] = {
+        anual: 0,
+        mensual: 0,
+        mensualAnterior: 0,
+        cierresCount: 0,
+        distribucion: {},
+        calendario: {}
+      };
+    });
+
+    ventasRaw.forEach(v => {
+      if (!stats[v.sucursal]) return;
+      const [d, m, y] = v.fecha.split("/");
+      const fVenta = new Date(y, m - 1, d);
+      const monto = Number(v.total) || 0;
+
+      if (fVenta.getFullYear() === añoActual) {
+        stats[v.sucursal].anual += monto;
+      }
+      if (fVenta.getFullYear() === añoActual && fVenta.getMonth() === mesActual) {
+        stats[v.sucursal].mensual += monto;
+      } else if (fVenta.getFullYear() === añoMesAnterior && fVenta.getMonth() === mesAnterior) {
+        stats[v.sucursal].mensualAnterior += monto;
+      }
+
+      if (!stats[v.sucursal].calendario[v.fecha]) {
+        stats[v.sucursal].calendario[v.fecha] = { total: 0, registros: [] };
+        stats[v.sucursal].cierresCount++;
+      }
+      stats[v.sucursal].calendario[v.fecha].total += monto;
+      stats[v.sucursal].calendario[v.fecha].registros.push(v);
+      stats[v.sucursal].distribucion[v.tipo] = (stats[v.sucursal].distribucion[v.tipo] || 0) + monto;
+    });
+
+    return stats;
+  }, [ventasRaw, sucursales]);
+
+  // --- MOTOR DE ALERTAS OPERACIONALES WEB 2.0 ---
+  const alertasOperacionales = useMemo(() => {
+    const alertas = [];
+    const hoyStr = obtenerFechaActual();
+    const ahora = new Date();
+
+    const stats = {};
+    sucursales.forEach(s => stats[s] = { hoy: 0, diarios: {}, tipos: {} });
+
+    ventasRaw.forEach(v => {
+      if (!stats[v.sucursal]) return;
+      const [d, m, y] = v.fecha.split("/");
+      const fVenta = new Date(y, m - 1, d);
+      const diffDias = Math.floor((ahora - fVenta) / (1000 * 60 * 60 * 24));
+      const monto = Number(v.total) || 0;
+
+      if (v.fecha === hoyStr) {
+        stats[v.sucursal].hoy += monto;
+        stats[v.sucursal].tipos[v.tipo] = (stats[v.sucursal].tipos[v.tipo] || 0) + monto;
+      }
+
+      if (diffDias > 0 && diffDias <= 14) {
+        stats[v.sucursal].diarios[v.fecha] = (stats[v.sucursal].diarios[v.fecha] || 0) + monto;
+      }
+    });
+
+    sucursales.forEach(s => {
+      const st = stats[s];
+
+      // 1. Sucursal sin cierres hoy
+      if (st.hoy === 0) {
+        alertas.push({ id: `no-data-${s}`, sucursal: s, mensaje: `${s} no registra cierres hoy`, prioridad: "alta", icono: "⚠️" });
+      }
+
+      const historico = Object.entries(st.diarios)
+        .sort((a, b) => {
+          const [da, ma, ya] = a[0].split("/"); const [db, mb, yb] = b[0].split("/");
+          return new Date(yb, mb-1, db) - new Date(ya, ma-1, da);
+        })
+        .map(x => x[1]);
+
+      // 2 & 3. Caída brusca (> 40% vs promedio 7 días)
+      const avg7d = historico.slice(0, 7).reduce((a, b) => a + b, 0) / 7;
+      if (st.hoy > 0 && avg7d > 0) {
+        const caida = ((avg7d - st.hoy) / avg7d) * 100;
+        if (caida >= 40) {
+          alertas.push({ id: `caida-${s}`, sucursal: s, mensaje: `${s} cayó ${Math.round(caida)}% respecto al promedio semanal`, prioridad: "alta", icono: "▼" });
+        }
+      }
+
+      // 4. Tendencia Negativa (3 días bajando)
+      if (st.hoy > 0 && historico.length >= 2) {
+        if (st.hoy < historico[0] && historico[0] < historico[1]) {
+          alertas.push({ id: `trend-${s}`, sucursal: s, mensaje: `${s} registra tendencia negativa por 3 días`, prioridad: "media", icono: "📉" });
+        }
+      }
+
+      // 5. Diferencia Extrema (> 85% un solo tipo)
+      if (st.hoy > 0) {
+        Object.entries(st.tipos).forEach(([tipo, monto]) => {
+          const perc = (monto / st.hoy) * 100;
+          if (perc > 85) {
+            alertas.push({ id: `extreme-${s}-${tipo}`, sucursal: s, mensaje: `${tipo} representa ${Math.round(perc)}% de las ventas en ${s}`, prioridad: "baja", icono: "⚖️" });
+          }
+        });
+      }
+    });
+
+    return alertas;
+  }, [ventasRaw, sucursales]);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         const userRef = doc(db, "usuarios", user.uid);
         const userSnap = await getDoc(userRef);
-
         if (userSnap.exists()) {
           const data = userSnap.data();
           setUsuario(user);
           setDatosUsuario(data);
-          if (data.estado === "aprobado") {
-            setFechaCierre(obtenerFechaActual());
-          }
+          if (data.estado === "aprobado") setFechaCierre(obtenerFechaActual());
         } else {
           const perfilBasico = { nombre: user.displayName || "Usuario", email: user.email, rol: "vendedor", estado: "pendiente" };
           await setDoc(userRef, perfilBasico);
-          setUsuario(user);
-          setDatosUsuario(perfilBasico);
+          setUsuario(user); setDatosUsuario(perfilBasico);
         }
       } else {
-        setUsuario(null);
-        setDatosUsuario(null);
+        setUsuario(null); setDatosUsuario(null);
       }
       setLoading(false);
     });
@@ -145,31 +264,23 @@ function App() {
         const data = d.data();
         return { id: d.id, ...data, fecha: formatearFecha(data.fecha) };
       });
-
       setVentasRaw(dataRaw);
 
-      // --- LÓGICA DE MÉTRICAS WEB 2.1 (ALINEADA CON ANDROID) ---
       const ahora = new Date();
       const añoActual = ahora.getFullYear();
       const mesActual = ahora.getMonth();
       const diaSemana = ahora.getDay();
-
       const diffLun = ahora.getDate() - diaSemana + (diaSemana === 0 ? -6 : 1);
       const lunesActual = new Date(new Date().setDate(diffLun));
       lunesActual.setHours(0,0,0,0);
-
       const lunesAnterior = new Date(lunesActual);
       lunesAnterior.setDate(lunesAnterior.getDate() - 7);
-
       const mesAnteriorDate = new Date(añoActual, mesActual - 1, 1);
       const mesAnterior = mesAnteriorDate.getMonth();
       const añoMesAnterior = mesAnteriorDate.getFullYear();
 
-      let totalAnual = 0;
-      let totalMesActual = 0;
-      let totalMesAnterior = 0;
-      let totalSemanaActual = 0;
-      let totalSemanaAnterior = 0;
+      let totalAnual = 0; let totalMesActual = 0; let totalMesAnterior = 0;
+      let totalSemanaActual = 0; let totalSemanaAnterior = 0;
       let mesSucursal = { "Lebu": 0, "Los Álamos": 0, "Cañete": 0 };
       let evolucionSemanal = [0, 0, 0, 0, 0, 0, 0];
 
@@ -177,46 +288,33 @@ function App() {
         const [d, m, y] = v.fecha.split("/");
         const fechaVenta = new Date(y, m - 1, d);
         const monto = Number(v.total) || 0;
-
-        // Acumulado Anual
         if (fechaVenta.getFullYear() === añoActual) totalAnual += monto;
-
-        // Acumulado Mes Actual vs Anterior
         if (fechaVenta.getFullYear() === añoActual && fechaVenta.getMonth() === mesActual) {
           totalMesActual += monto;
           if (mesSucursal.hasOwnProperty(v.sucursal)) mesSucursal[v.sucursal] += monto;
         } else if (fechaVenta.getFullYear() === añoMesAnterior && fechaVenta.getMonth() === mesAnterior) {
           totalMesAnterior += monto;
         }
-
-        // Evolución Semanal Actual
         if (fechaVenta >= lunesActual) {
           totalSemanaActual += monto;
-          let indiceDia = fechaVenta.getDay();
-          let indiceCorregido = indiceDia === 0 ? 6 : indiceDia - 1;
-          if (indiceCorregido >= 0 && indiceCorregido <= 6) evolucionSemanal[indiceCorregido] += monto;
+          let idx = fechaVenta.getDay();
+          let corr = idx === 0 ? 6 : idx - 1;
+          if (corr >= 0 && corr <= 6) evolucionSemanal[corr] += monto;
         } else if (fechaVenta >= lunesAnterior && fechaVenta < lunesActual) {
           totalSemanaAnterior += monto;
         }
       });
 
-      const calcularTendencia = (actual, anterior) => {
-        if (anterior === 0) return actual > 0 ? 100 : 0;
-        return ((actual - anterior) / anterior) * 100;
-      };
-
+      const calcularTendencia = (act, ant) => ant === 0 ? (act > 0 ? 100 : 0) : ((act - ant) / ant) * 100;
       const mejorSuc = Object.entries(mesSucursal).reduce((a, b) => b[1] > a[1] ? b : a, ["-", 0])[0];
-      const diasTranscurridosSemana = (diaSemana === 0 ? 7 : diaSemana);
+      const diasT = (diaSemana === 0 ? 7 : diaSemana);
 
       setMetricasWeb({
-        anualGlobal: totalAnual,
-        mensualSucursal: mesSucursal,
-        semanalEvolucion: evolucionSemanal,
+        anualGlobal: totalAnual, mensualSucursal: mesSucursal, semanalEvolucion: evolucionSemanal,
         tendenciaSemana: calcularTendencia(totalSemanaActual, totalSemanaAnterior),
         tendenciaMes: calcularTendencia(totalMesActual, totalMesAnterior),
-        mejorSucursalMes: mejorSuc,
-        totalSemanaActual: totalSemanaActual,
-        promedioDiarioSemanal: totalSemanaActual / diasTranscurridosSemana
+        mejorSucursalMes: mejorSuc, totalSemanaActual: totalSemanaActual,
+        promedioDiarioSemanal: totalSemanaActual / diasT
       });
     });
 
@@ -224,44 +322,31 @@ function App() {
     return () => unsubVentas();
   }, [usuario, datosUsuario]);
 
-  // --- LÓGICA DE FILTRADO Y AGRUPAMIENTO EJECUTIVO ---
   const cierresEjecutivos = useMemo(() => {
     const hoy = new Date();
-    const diezDiasAtras = new Date();
-    diezDiasAtras.setDate(hoy.getDate() - 10);
-    diezDiasAtras.setHours(0,0,0,0);
-
+    const diezDiasAtras = new Date(); diezDiasAtras.setDate(hoy.getDate() - 10); diezDiasAtras.setHours(0,0,0,0);
     const filtradas = ventasRaw.filter(v => {
-      const [d, m, y] = v.fecha.split("/");
-      const fVenta = new Date(y, m - 1, d);
+      const [d, m, y] = v.fecha.split("/"); const fVenta = new Date(y, m - 1, d);
       if (filtroSucursal !== "" && v.sucursal !== filtroSucursal) return false;
       if (filtroUltimos10 && fVenta < diezDiasAtras) return false;
       if (!filtroUltimos10 && filtroMes !== "") {
-        const mesVenta = `${m}/${y}`;
-        if (mesVenta !== filtroMes) return false;
+        const mesVenta = `${m}/${y}`; if (mesVenta !== filtroMes) return false;
       }
       return true;
     });
-
     const grupos = {};
     filtradas.forEach(v => {
       const key = `${v.fecha}_${v.sucursal}`;
-      if (!grupos[key]) {
-        grupos[key] = { id: key, fecha: v.fecha, sucursal: v.sucursal, totalConsolidado: 0, registros: [] };
-      }
+      if (!grupos[key]) grupos[key] = { id: key, fecha: v.fecha, sucursal: v.sucursal, totalConsolidado: 0, registros: [] };
       grupos[key].totalConsolidado += (Number(v.total) || 0);
       grupos[key].registros.push(v);
     });
-
     return Object.values(grupos).sort((a, b) => {
-      const [da, ma, ya] = a.fecha.split("/");
-      const [db, mb, yb] = b.fecha.split("/");
+      const [da, ma, ya] = a.fecha.split("/"); const [db, mb, yb] = b.fecha.split("/");
       return new Date(yb, mb - 1, db) - new Date(ya, ma - 1, da);
     });
   }, [ventasRaw, filtroSucursal, filtroMes, filtroUltimos10]);
 
-  // Estados del Formulario
-  const [sucursalSeleccionada, setSucursalSeleccionada] = useState("");
   const [ventasInputs, setVentasInputs] = useState({});
   const [totalGeneral, setTotalGeneral] = useState(0);
   const [fechaCierre, setFechaCierre] = useState("");
@@ -271,48 +356,29 @@ function App() {
     setTotalGeneral(suma);
   }, [ventasInputs]);
 
-  const manejarCambioInput = (tipo, valor) => {
-    setVentasInputs(prev => ({ ...prev, [tipo]: valor }));
-  };
+  const manejarCambioInput = (tipo, valor) => setVentasInputs(prev => ({ ...prev, [tipo]: valor }));
 
   const guardarCierre = async (e) => {
-    e.preventDefault();
-    if (totalGeneral === 0) return alert("Ingrese montos.");
-
+    e.preventDefault(); if (totalGeneral === 0) return alert("Ingrese montos.");
     try {
       const fechaID = fechaCierre.replace(/\//g, "-");
       const promesas = Object.entries(ventasInputs).map(([tipo, valor]) => {
-        const monto = Number(valor) || 0;
-        if (monto === 0) return null;
+        const monto = Number(valor) || 0; if (monto === 0) return null;
         const docID = `${fechaID}_${sucursalSeleccionada}_${sanitizarTipoParaId(tipo)}`;
         return setDoc(doc(db, "ventas", docID), {
-          fecha: fechaCierre,
-          sucursal: sucursalSeleccionada.trim(),
-          tipo: tipo.trim(),
-          total: monto,
-          usuario: usuario.displayName || usuario.email,
-          usuarioId: usuario.uid,
-          lastUpdated: Date.now()
+          fecha: fechaCierre, sucursal: sucursalSeleccionada.trim(), tipo: tipo.trim(), total: monto,
+          usuario: usuario.displayName || usuario.email, usuarioId: usuario.uid, lastUpdated: Date.now()
         });
       });
       await Promise.all(promesas.filter(p => p !== null));
       alert("Ventas sincronizadas exitosamente.");
-      const reset = {};
-      tiposVenta.forEach(t => reset[t] = "");
-      setVentasInputs(reset);
-    } catch (e) {
-      alert("Error de conexión o permisos denegados.");
-    }
+      const reset = {}; tiposVenta.forEach(t => reset[t] = ""); setVentasInputs(reset);
+    } catch (e) { alert("Error de conexión o permisos denegados."); }
   };
 
   const eliminarRegistro = async (id) => {
     if (!window.confirm("¿Seguro que desea eliminar este registro?")) return;
-    try {
-      await deleteDoc(doc(db, "ventas", id));
-      alert("Registro eliminado.");
-    } catch (e) {
-      alert("Error al eliminar.");
-    }
+    try { await deleteDoc(doc(db, "ventas", id)); alert("Registro eliminado."); } catch (e) { alert("Error al eliminar."); }
   };
 
   const iniciarSesion = async () => {
@@ -324,11 +390,7 @@ function App() {
   if (!usuario) {
     return (
       <div className="login-page">
-        <div className="login-card">
-          <h1>Gestor Pro</h1>
-          <p>Inicie sesión para continuar</p>
-          <button onClick={iniciarSesion} className="btn-google">Entrar con Google</button>
-        </div>
+        <div className="login-card"><h1>Gestor Pro</h1><p>Inicie sesión para continuar</p><button onClick={iniciarSesion} className="btn-google">Entrar con Google</button></div>
       </div>
     );
   }
@@ -337,9 +399,7 @@ function App() {
     return (
       <div className="login-page">
         <div className="login-card">
-          <h2 style={{color: datosUsuario.estado === "rechazado" ? "red" : "orange"}}>
-            Acceso {datosUsuario.estado === "rechazado" ? "Rechazado" : "Restringido"}
-          </h2>
+          <h2 style={{color: datosUsuario.estado === "rechazado" ? "red" : "orange"}}>Acceso {datosUsuario.estado === "rechazado" ? "Rechazado" : "Restringido"}</h2>
           <p>Tu cuenta ({usuario.email}) está en estado "{datosUsuario.estado}".</p>
           <button onClick={() => signOut(auth)} className="btn-logout">Cerrar Sesión</button>
         </div>
@@ -370,17 +430,11 @@ function App() {
               </div>
               <div className="ventas-inputs-grid">
                 {tiposVenta.map(tipo => (
-                  <div className="field" key={tipo}>
-                    <label>{tipo}</label>
-                    <input type="number" placeholder="0" value={ventasInputs[tipo] || ""} onChange={(e) => manejarCambioInput(tipo, e.target.value)} />
-                  </div>
+                  <div className="field" key={tipo}><label>{tipo}</label><input type="number" placeholder="0" value={ventasInputs[tipo] || ""} onChange={(e) => manejarCambioInput(tipo, e.target.value)} /></div>
                 ))}
               </div>
               <div className="summary-bar">
-                <div className="total-box">
-                  <span className="label">Total:</span>
-                  <span className="amount">${totalGeneral.toLocaleString("es-CL")}</span>
-                </div>
+                <div className="total-box"><span className="label">Total:</span><span className="amount">${totalGeneral.toLocaleString("es-CL")}</span></div>
                 <button type="submit" className="btn-save">Guardar Todo</button>
               </div>
             </form>
@@ -416,38 +470,24 @@ function App() {
                       </div>
                     </div>
                   </div>
-
                   <div className="executive-grid">
                     {cierresEjecutivos.map(c => {
                       const canExpand = filtroSucursal !== "";
                       const isExpanded = canExpand && expandedId === c.id;
-
                       return (
                         <div key={c.id} className={`executive-card ${isExpanded ? 'expanded' : ''}`}>
                           <div className="exec-header">
                             <div className="exec-info">
-                              <span
-                                className={`exec-date ${canExpand ? 'clickable' : ''}`}
-                                onClick={() => canExpand && setExpandedId(isExpanded ? null : c.id)}
-                              >
-                                {c.fecha}
-                              </span>
+                              <span className={`exec-date ${canExpand ? 'clickable' : ''}`} onClick={() => canExpand && setExpandedId(isExpanded ? null : c.id)}>{c.fecha}</span>
                               <span className="exec-suc">{c.sucursal}</span>
                             </div>
-                            <div className="exec-total">
-                              <span className="label">Consolidado</span>
-                              <strong>${c.totalConsolidado.toLocaleString("es-CL")}</strong>
-                            </div>
+                            <div className="exec-total"><span className="label">Consolidado</span><strong>${c.totalConsolidado.toLocaleString("es-CL")}</strong></div>
                           </div>
-
                           {isExpanded && (
                             <div className="exec-details-list">
                               {c.registros.map(reg => (
                                 <div key={reg.id} className="detail-item">
-                                  <div className="det-text">
-                                    <span className="det-type">{reg.tipo}</span>
-                                    <span className="det-amount">${Number(reg.total).toLocaleString("es-CL")}</span>
-                                  </div>
+                                  <div className="det-text"><span className="det-type">{reg.tipo}</span><span className="det-amount">${Number(reg.total).toLocaleString("es-CL")}</span></div>
                                   <button onClick={() => eliminarRegistro(reg.id)} className="btn-delete-mini">Eliminar</button>
                                 </div>
                               ))}
@@ -463,65 +503,34 @@ function App() {
               {subVista === "metricas" && (
                 <div className="metricas-web-view">
                   <div className="executive-summary-top">
-                    <div className="card summary-mini-card blue">
-                      <span className="label">Mejor Sucursal Mes</span>
-                      <strong>{metricasWeb.mejorSucursalMes}</strong>
-                    </div>
-                    <div className="card summary-mini-card purple">
-                      <span className="label">Semana Actual</span>
-                      <strong>${metricasWeb.totalSemanaActual.toLocaleString("es-CL")}</strong>
-                    </div>
-                    <div className="card summary-mini-card yellow">
-                      <span className="label">Promedio Diario Semanal</span>
-                      <strong>${Math.round(metricasWeb.promedioDiarioSemanal).toLocaleString("es-CL")}</strong>
-                    </div>
+                    <div className="card summary-mini-card blue"><span className="label">Mejor Sucursal Mes</span><strong>{metricasWeb.mejorSucursalMes}</strong></div>
+                    <div className="card summary-mini-card purple"><span className="label">Semana Actual</span><strong>${metricasWeb.totalSemanaActual.toLocaleString("es-CL")}</strong></div>
+                    <div className="card summary-mini-card yellow"><span className="label">Promedio Diario Semanal</span><strong>${Math.round(metricasWeb.promedioDiarioSemanal).toLocaleString("es-CL")}</strong></div>
                   </div>
-
                   <div className="metricas-header-anual">
                     <div className="card stat-card-full">
-                      <div className="stat-main">
-                        <span className="label">Ventas Acumuladas Año Actual</span>
-                        <h2 className="amount-hero">${metricasWeb.anualGlobal.toLocaleString("es-CL")}</h2>
-                      </div>
-                      <div className={`trend-badge ${metricasWeb.tendenciaMes >= 0 ? 'up' : 'down'}`}>
-                        {metricasWeb.tendenciaMes >= 0 ? '▲' : '▼'} {Math.abs(Math.round(metricasWeb.tendenciaMes))}%
-                        <span className="trend-label">vs mes anterior</span>
-                      </div>
+                      <div className="stat-main"><span className="label">Ventas Acumuladas Año Actual</span><h2 className="amount-hero">${metricasWeb.anualGlobal.toLocaleString("es-CL")}</h2></div>
+                      <div className={`trend-badge ${metricasWeb.tendenciaMes >= 0 ? 'up' : 'down'}`}>{metricasWeb.tendenciaMes >= 0 ? '▲' : '▼'} {Math.abs(Math.round(metricasWeb.tendenciaMes))}%<span className="trend-label">vs mes anterior</span></div>
                     </div>
                   </div>
-
                   <div className="metricas-grid-sucursales">
                     {sucursales.map(suc => (
                       <div key={suc} className="card stat-card-sucursal">
-                        <div className="suc-info">
-                          <span className="label">Mes Actual</span>
-                          <h3 className="suc-name">{suc}</h3>
-                        </div>
+                        <div className="suc-info"><span className="label">Mes Actual</span><h3 className="suc-name">{suc}</h3></div>
                         <h3 className="amount-suc">${(metricasWeb.mensualSucursal[suc] || 0).toLocaleString("es-CL")}</h3>
-                        <div className="progress-bar-bg">
-                           <div className="progress-bar-fill" style={{width: `${Math.min(((metricasWeb.mensualSucursal[suc] || 0) / (metricasWeb.anualGlobal / 4 || 1)) * 100, 100)}%`}}></div>
-                        </div>
+                        <div className="progress-bar-bg"><div className="progress-bar-fill" style={{width: `${Math.min(((metricasWeb.mensualSucursal[suc] || 0) / (metricasWeb.anualGlobal / 4 || 1)) * 100, 100)}%`}}></div></div>
                       </div>
                     ))}
                   </div>
-
                   <div className="card evolution-card">
-                    <div className="evolution-header">
-                      <h3>Evolución Semanal</h3>
-                      <div className={`trend-badge mini ${metricasWeb.tendenciaSemana >= 0 ? 'up' : 'down'}`}>
-                        {metricasWeb.tendenciaSemana >= 0 ? '▲' : '▼'} {Math.abs(Math.round(metricasWeb.tendenciaSemana))}%
-                      </div>
-                    </div>
+                    <div className="evolution-header"><h3>Evolución Semanal</h3><div className={`trend-badge mini ${metricasWeb.tendenciaSemana >= 0 ? 'up' : 'down'}`}>{metricasWeb.tendenciaSemana >= 0 ? '▲' : '▼'} {Math.abs(Math.round(metricasWeb.tendenciaSemana))}%</div></div>
                     <div className="bar-chart-semanal">
                       {["LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB", "DOM"].map((dia, idx) => {
                         const esHoy = (new Date().getDay() === (idx === 6 ? 0 : idx + 1));
                         return (
                           <div key={dia} className={`chart-col ${esHoy ? 'today' : ''}`}>
                             <span className="val-text">${(metricasWeb.semanalEvolucion[idx] || 0).toLocaleString("es-CL")}</span>
-                            <div
-                              className="chart-bar-fill"
-                              style={{height: `${Math.min((metricasWeb.semanalEvolucion[idx] / (Math.max(...metricasWeb.semanalEvolucion) || 1)) * 140, 140)}px`}}
-                            ></div>
+                            <div className="chart-bar-fill" style={{height: `${Math.min((metricasWeb.semanalEvolucion[idx] / (Math.max(...metricasWeb.semanalEvolucion) || 1)) * 140, 140)}px`}}></div>
                             <span className="chart-label">{dia}</span>
                           </div>
                         );
@@ -531,23 +540,130 @@ function App() {
                 </div>
               )}
 
-              {subVista === "sucursales" && <div><p>Módulo de Sucursales (Próximamente)</p></div>}
-              {subVista === "alertas" && <div><p>Módulo de Alertas (Próximamente)</p></div>}
+              {subVista === "sucursales" && (
+                <div className="sucursales-web-view">
+                  {!sucursalDetalle ? (
+                    <div className="sucursales-grid-main">
+                      {sucursales.map(s => {
+                        const m = sucursalesMetricas[s]; const tend = ((m.mensual - m.mensualAnterior) / (m.mensualAnterior || 1)) * 100;
+                        return (
+                          <div key={s} className="card sucursal-exec-card" onClick={() => setSucursalDetalle(s)}>
+                            <div className="s-card-header"><h3>{s}</h3><div className={`trend-indicator ${tend >= 0 ? 'up' : 'down'}`}>{tend >= 0 ? '▲' : '▼'} {Math.abs(Math.round(tend))}%</div></div>
+                            <div className="s-card-stats"><div className="s-stat"><span className="label">Total Mes</span><strong>${m.mensual.toLocaleString("es-CL")}</strong></div><div className="s-stat"><span className="label">Total Año</span><strong>${m.anual.toLocaleString("es-CL")}</strong></div></div>
+                            <div className="s-card-footer"><span>{m.cierresCount} cierres registrados</span><button className="btn-view">Ver Detalle</button></div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="sucursal-detail-view">
+                      <header className="detail-header"><button className="btn-back" onClick={() => {setSucursalDetalle(null); setFechaCalendario(null)}}>← Volver</button><h2>{sucursalDetalle}</h2></header>
+                      <div className="detail-summary-grid">
+                        <div className="card summary-box"><span className="label">Total Año</span><strong>${sucursalesMetricas[sucursalDetalle].anual.toLocaleString("es-CL")}</strong></div>
+                        <div className="card summary-box"><span className="label">Total Mes</span><strong>${sucursalesMetricas[sucursalDetalle].mensual.toLocaleString("es-CL")}</strong></div>
+                        <div className="card summary-box"><span className="label">Promedio Diario</span><strong>${Math.round(sucursalesMetricas[sucursalDetalle].anual / (sucursalesMetricas[sucursalDetalle].cierresCount || 1)).toLocaleString("es-CL")}</strong></div>
+                        <div className="card summary-box"><span className="label">Cierres</span><strong>{sucursalesMetricas[sucursalDetalle].cierresCount}</strong></div>
+                      </div>
+                      <div className="detail-layout-columns">
+                        <div className="detail-col-left">
+                          <section className="card distribution-section">
+                            <h3>Distribución por Tipo de Venta</h3>
+                            <div className="dist-list">
+                              {Object.entries(sucursalesMetricas[sucursalDetalle].distribucion).sort((a,b) => b[1] - a[1]).map(([tipo, total]) => {
+                                const perc = (total / (sucursalesMetricas[sucursalDetalle].anual || 1)) * 100;
+                                return (
+                                  <div key={tipo} className="dist-item"><div className="dist-info"><span className="dist-name">{tipo}</span><span className="dist-perc">{Math.round(perc)}%</span></div><div className="dist-bar-bg"><div className="dist-bar-fill" style={{width: `${perc}%`}}></div></div><span className="dist-total">${total.toLocaleString("es-CL")}</span></div>
+                                );
+                              })}
+                            </div>
+                          </section>
+                        </div>
+                        <div className="detail-col-right">
+                          <section className="card calendar-section">
+                            <div className="calendar-header-nav">
+                              <h3>Calendario</h3>
+                              <div className="cal-nav-btns">
+                                <button onClick={() => setMesVista(new Date(mesVista.setMonth(mesVista.getMonth() - 1)))}>←</button>
+                                <span>{mesVista.toLocaleString("es-CL", { month: 'long', year: 'numeric' }).toUpperCase()}</span>
+                                <button onClick={() => setMesVista(new Date(mesVista.setMonth(mesVista.getMonth() + 1)))}>→</button>
+                              </div>
+                            </div>
+                            <div className="calendar-grid-full">
+                              {["LU", "MA", "MI", "JU", "VI", "SA", "DO"].map(d => <div key={d} className="cal-day-label">{d}</div>)}
+                              {(() => {
+                                const start = new Date(mesVista.getFullYear(), mesVista.getMonth(), 1);
+                                const end = new Date(mesVista.getFullYear(), mesVista.getMonth() + 1, 0);
+                                const days = [];
+                                let firstDayIdx = start.getDay(); // 0 Dom, 1 Lun
+                                firstDayIdx = firstDayIdx === 0 ? 6 : firstDayIdx - 1;
+                                for (let i = 0; i < firstDayIdx; i++) days.push(<div key={`empty-${i}`} className="cal-day-empty"></div>);
+                                for (let d = 1; d <= end.getDate(); d++) {
+                                  const fechaKey = `${String(d).padStart(2, '0')}/${String(mesVista.getMonth() + 1).padStart(2, '0')}/${mesVista.getFullYear()}`;
+                                  const tieneVenta = sucursalesMetricas[sucursalDetalle].calendario[fechaKey];
+                                  days.push(
+                                    <button key={d} className={`cal-day-box ${fechaCalendario === fechaKey ? 'active' : ''} ${tieneVenta ? 'has-data' : ''}`} onClick={() => setFechaCalendario(fechaCalendario === fechaKey ? null : fechaKey)}>
+                                      <span className="day-num">{d}</span>
+                                      {tieneVenta && <span className="day-dot"></span>}
+                                    </button>
+                                  );
+                                }
+                                return days;
+                              })()}
+                            </div>
+                            {fechaCalendario && (
+                              <div className="day-detail-box">
+                                <h4>Detalle del {fechaCalendario}</h4>
+                                {sucursalesMetricas[sucursalDetalle].calendario[fechaCalendario] ? (
+                                  <>
+                                    <div className="day-total-hero">${sucursalesMetricas[sucursalDetalle].calendario[fechaCalendario].total.toLocaleString("es-CL")}</div>
+                                    <div className="day-registros">{sucursalesMetricas[sucursalDetalle].calendario[fechaCalendario].registros.map(reg => (<div key={reg.id} className="day-reg-item"><span>{reg.tipo}</span><strong>${Number(reg.total).toLocaleString("es-CL")}</strong></div>))}</div>
+                                  </>
+                                ) : <div className="no-data-msg">Sin registros para esta fecha</div>}
+                                <p className="read-only-note">Modo solo lectura</p>
+                              </div>
+                            )}
+                          </section>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              {subVista === "alertas" && (
+                <div className="alertas-web-view">
+                  <h2 className="section-title">Alertas Operacionales</h2>
+                  {alertasOperacionales.length === 0 ? (
+                    <div className="card no-alerts-card">
+                      <span className="check-icon">✅</span>
+                      <p>Sin alertas operacionales</p>
+                      <small>El sistema no detectó irregularidades hoy.</small>
+                    </div>
+                  ) : (
+                    <div className="alertas-grid">
+                      {alertasOperacionales.map(alerta => (
+                        <div key={alerta.id} className={`alerta-card ${alerta.prioridad}`}>
+                          <div className="alerta-icon">{alerta.icono}</div>
+                          <div className="alerta-content">
+                            <span className="alerta-suc">{alerta.sucursal}</span>
+                            <p className="alerta-msg">{alerta.mensaje}</p>
+                          </div>
+                          <div className="alerta-badge">{alerta.prioridad.toUpperCase()}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         );
 
       case "configuracion":
         return (
-          <div className="card">
-            <h2>Configuración</h2>
-            <p>Ajustes de perfil y sistema.</p>
-            <button onClick={() => signOut(auth)} className="btn-logout" style={{width: '200px', marginTop: '1rem'}}>Cerrar Sesión</button>
-          </div>
+          <div className="card"><h2>Configuración</h2><p>Ajustes de perfil y sistema.</p><button onClick={() => signOut(auth)} className="btn-logout" style={{width: '200px', marginTop: '1rem'}}>Cerrar Sesión</button></div>
         );
 
-      default:
-        return null;
+      default: return null;
     }
   };
 
@@ -561,15 +677,10 @@ function App() {
             <button className={vista === "analisis" ? "active" : ""} onClick={() => setVista("analisis")}>Análisis</button>
             <button className={vista === "configuracion" ? "active" : ""} onClick={() => setVista("configuracion")}>Configuración</button>
           </div>
-          <div className="user-nav">
-            <span className="user-role-badge">{datosUsuario?.rol}</span>
-          </div>
+          <div className="user-nav"><span className="user-role-badge">{datosUsuario?.rol}</span></div>
         </div>
       </header>
-
-      <main className="content-container">
-        {renderContenido()}
-      </main>
+      <main className="content-container">{renderContenido()}</main>
     </div>
   );
 }
