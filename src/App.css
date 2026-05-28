@@ -334,6 +334,17 @@ body {
   font-size: 1rem;
 }
 
+.exec-date.clickable {
+  cursor: pointer;
+  color: var(--primary-color);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+.exec-date.clickable:hover {
+  color: var(--primary-dark);
+}
+
 .exec-suc {
   font-size: 0.75rem;
   color: var(--text-muted);

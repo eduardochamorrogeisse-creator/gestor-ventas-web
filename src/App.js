@@ -39,6 +39,7 @@ function App() {
   const [filtroSucursal, setFiltroSucursal] = useState("");
   const [filtroMes, setFiltroMes] = useState(""); // vacío = todos
   const [filtroUltimos10, setFiltroUltimos10] = useState(true);
+  const [expandedId, setExpandedId] = useState(null); // Control de expansión manual
 
   // Catálogos y Datos
   const [sucursales, setSucursales] = useState(["Lebu", "Los Álamos", "Cañete"]);
@@ -392,12 +393,19 @@ function App() {
 
                   <div className="executive-grid">
                     {cierresEjecutivos.map(c => {
-                      const isExpanded = filtroSucursal !== "";
+                      const canExpand = filtroSucursal !== "";
+                      const isExpanded = canExpand && expandedId === c.id;
+
                       return (
                         <div key={c.id} className={`executive-card ${isExpanded ? 'expanded' : ''}`}>
                           <div className="exec-header">
                             <div className="exec-info">
-                              <span className="exec-date">{c.fecha}</span>
+                              <span
+                                className={`exec-date ${canExpand ? 'clickable' : ''}`}
+                                onClick={() => canExpand && setExpandedId(isExpanded ? null : c.id)}
+                              >
+                                {c.fecha}
+                              </span>
                               <span className="exec-suc">{c.sucursal}</span>
                             </div>
                             <div className="exec-total">
