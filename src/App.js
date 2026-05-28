@@ -159,6 +159,17 @@ function App() {
     setVentasInputs(prev => ({ ...prev, [tipo]: valor }));
   };
 
+  // Función de sanitización idéntica a Android 2.0.0 para compatibilidad de IDs
+  const sanitizarTipoParaId = (tipo) => {
+    if (!tipo) return "Otros";
+    return tipo
+      .replace(/á/g, "a").replace(/é/g, "e").replace(/í/g, "i").replace(/ó/g, "o").replace(/ú/g, "u")
+      .replace(/Á/g, "A").replace(/É/g, "E").replace(/Í/g, "I").replace(/Ó/g, "O").replace(/Ú/g, "U")
+      .replace(/\//g, "") // Eliminar slashes
+      .replace(/\s+/g, "") // Eliminar espacios
+      .replace(/[^a-zA-Z0-9]/g, ""); // Mantener solo alfanuméricos
+  };
+
   const guardarCierre = async (e) => {
     e.preventDefault();
     if (totalGeneral === 0) return alert("Ingrese montos.");
@@ -168,7 +179,10 @@ function App() {
       const promesas = Object.entries(ventasInputs).map(([tipo, valor]) => {
         const monto = Number(valor) || 0;
         if (monto === 0) return null;
-        const docID = `${fechaID}_${sucursalSeleccionada}_${tipo.replace(/\//g, "")}`;
+
+        // ID NORMALIZADO: Compatibilidad 100% con Android 2.0.0
+        const docID = `${fechaID}_${sucursalSeleccionada}_${sanitizarTipoParaId(tipo)}`;
+
         return setDoc(doc(db, "ventas", docID), {
           fecha: fechaCierre,
           sucursal: sucursalSeleccionada.trim(),
