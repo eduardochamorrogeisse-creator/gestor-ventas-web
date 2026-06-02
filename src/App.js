@@ -96,9 +96,7 @@ function App() {
     return tipo
       .replace(/á/g, "a").replace(/é/g, "e").replace(/í/g, "i").replace(/ó/g, "o").replace(/ú/g, "u")
       .replace(/Á/g, "A").replace(/É/g, "E").replace(/Í/g, "I").replace(/Ó/g, "O").replace(/Ú/g, "U")
-      .replace(/\//g, "")
-      .replace(/\s+/g, "")
-      .replace(/[^a-zA-Z0-9]/g, "");
+      .replace(/\//g, "").replace(/\s+/g, "").replace(/[^a-zA-Z0-9]/g, "");
   };
 
   // --- PROCESAMIENTO DE SUCURSALES WEB 2.0 ---
@@ -112,14 +110,7 @@ function App() {
 
     const stats = {};
     sucursales.forEach(s => {
-      stats[s] = {
-        anual: 0,
-        mensual: 0,
-        mensualAnterior: 0,
-        cierresCount: 0,
-        distribucion: {},
-        calendario: {}
-      };
+      stats[s] = { anual: 0, mensual: 0, mensualAnterior: 0, cierresCount: 0, distribucion: {}, calendario: {} };
     });
 
     ventasRaw.forEach(v => {
@@ -127,16 +118,9 @@ function App() {
       const [d, m, y] = v.fecha.split("/");
       const fVenta = new Date(y, m - 1, d);
       const monto = Number(v.total) || 0;
-
-      if (fVenta.getFullYear() === añoActual) {
-        stats[v.sucursal].anual += monto;
-      }
-      if (fVenta.getFullYear() === añoActual && fVenta.getMonth() === mesActual) {
-        stats[v.sucursal].mensual += monto;
-      } else if (fVenta.getFullYear() === añoMesAnterior && fVenta.getMonth() === mesAnterior) {
-        stats[v.sucursal].mensualAnterior += monto;
-      }
-
+      if (fVenta.getFullYear() === añoActual) stats[v.sucursal].anual += monto;
+      if (fVenta.getFullYear() === añoActual && fVenta.getMonth() === mesActual) stats[v.sucursal].mensual += monto;
+      else if (fVenta.getFullYear() === añoMesAnterior && fVenta.getMonth() === mesAnterior) stats[v.sucursal].mensualAnterior += monto;
       if (!stats[v.sucursal].calendario[v.fecha]) {
         stats[v.sucursal].calendario[v.fecha] = { total: 0, registros: [] };
         stats[v.sucursal].cierresCount++;
@@ -145,76 +129,79 @@ function App() {
       stats[v.sucursal].calendario[v.fecha].registros.push(v);
       stats[v.sucursal].distribucion[v.tipo] = (stats[v.sucursal].distribucion[v.tipo] || 0) + monto;
     });
-
     return stats;
   }, [ventasRaw, sucursales]);
 
-  // --- MOTOR DE ALERTAS OPERACIONALES WEB 2.0 ---
+  // --- MOTOR DE ALERTAS ---
   const alertasOperacionales = useMemo(() => {
     const alertas = [];
     const hoyStr = obtenerFechaActual();
     const ahora = new Date();
-
     const stats = {};
     sucursales.forEach(s => stats[s] = { hoy: 0, diarios: {}, tipos: {} });
-
     ventasRaw.forEach(v => {
       if (!stats[v.sucursal]) return;
       const [d, m, y] = v.fecha.split("/");
       const fVenta = new Date(y, m - 1, d);
       const diffDias = Math.floor((ahora - fVenta) / (1000 * 60 * 60 * 24));
       const monto = Number(v.total) || 0;
-
       if (v.fecha === hoyStr) {
         stats[v.sucursal].hoy += monto;
         stats[v.sucursal].tipos[v.tipo] = (stats[v.sucursal].tipos[v.tipo] || 0) + monto;
       }
-
-      if (diffDias > 0 && diffDias <= 14) {
-        stats[v.sucursal].diarios[v.fecha] = (stats[v.sucursal].diarios[v.fecha] || 0) + monto;
-      }
+      if (diffDias > 0 && diffDias <= 14) stats[v.sucursal].diarios[v.fecha] = (stats[v.sucursal].diarios[v.fecha] || 0) + monto;
     });
-
     sucursales.forEach(s => {
       const st = stats[s];
-
-      if (st.hoy === 0) {
-        alertas.push({ id: `no-data-${s}`, sucursal: s, mensaje: `${s} no registra cierres hoy`, prioridad: "alta", icono: "⚠️" });
-      }
-
-      const historico = Object.entries(st.diarios)
-        .sort((a, b) => {
-          const [da, ma, ya] = a[0].split("/"); const [db, mb, yb] = b[0].split("/");
-          return new Date(yb, mb-1, db) - new Date(ya, ma-1, da);
-        })
-        .map(x => x[1]);
-
+      if (st.hoy === 0) alertas.push({ id: `no-data-${s}`, sucursal: s, mensaje: `${s} no registra cierres hoy`, prioridad: "alta", icono: "⚠️" });
+      const historico = Object.entries(st.diarios).sort((a, b) => {
+        const [da, ma, ya] = a[0].split("/"); const [db, mb, yb] = b[0].split("/");
+        return new Date(yb, mb - 1, db) - new Date(ya, ma - 1, da);
+      }).map(x => x[1]);
       const avg7d = historico.slice(0, 7).reduce((a, b) => a + b, 0) / 7;
       if (st.hoy > 0 && avg7d > 0) {
         const caida = ((avg7d - st.hoy) / avg7d) * 100;
-        if (caida >= 40) {
-          alertas.push({ id: `caida-${s}`, sucursal: s, mensaje: `${s} cayó ${Math.round(caida)}% respecto al promedio semanal`, prioridad: "alta", icono: "▼" });
-        }
+        if (caida >= 40) alertas.push({ id: `caida-${s}`, sucursal: s, mensaje: `${s} cayó ${Math.round(caida)}% respecto al promedio semanal`, prioridad: "alta", icono: "▼" });
       }
-
       if (st.hoy > 0 && historico.length >= 2) {
-        if (st.hoy < historico[0] && historico[0] < historico[1]) {
-          alertas.push({ id: `trend-${s}`, sucursal: s, mensaje: `${s} registra tendencia negativa por 3 días`, prioridad: "media", icono: "📉" });
-        }
+        if (st.hoy < historico[0] && historico[0] < historico[1]) alertas.push({ id: `trend-${s}`, sucursal: s, mensaje: `${s} registra tendencia negativa por 3 días`, prioridad: "media", icono: "📉" });
       }
-
       if (st.hoy > 0) {
         Object.entries(st.tipos).forEach(([tipo, monto]) => {
           const perc = (monto / st.hoy) * 100;
-          if (perc > 85) {
-            alertas.push({ id: `extreme-${s}-${tipo}`, sucursal: s, mensaje: `${tipo} representa ${Math.round(perc)}% de las ventas en ${s}`, prioridad: "baja", icono: "⚖️" });
-          }
+          if (perc > 85) alertas.push({ id: `extreme-${s}-${tipo}`, sucursal: s, mensaje: `${tipo} representa ${Math.round(perc)}% de las ventas en ${s}`, prioridad: "baja", icono: "⚖️" });
         });
       }
     });
-
     return alertas;
   }, [ventasRaw, sucursales]);
+
+  // --- HISTORIAL COMPARATIVO ---
+  const historialComparativo = useMemo(() => {
+    const hoy = new Date();
+    const diezDiasAtras = new Date(); diezDiasAtras.setDate(hoy.getDate() - 10); diezDiasAtras.setHours(0,0,0,0);
+    const filtradas = ventasRaw.filter(v => {
+      const [d, m, y] = v.fecha.split("/"); const fVenta = new Date(y, m - 1, d);
+      if (filtroSucursal !== "" && v.sucursal !== filtroSucursal) return false;
+      if (filtroUltimos10 && fVenta < diezDiasAtras) return false;
+      if (!filtroUltimos10 && filtroMes !== "") {
+        const mesVenta = `${m}/${y}`; if (mesVenta !== filtroMes) return false;
+      }
+      return true;
+    });
+    const filas = {};
+    filtradas.forEach(v => {
+      if (!filas[v.fecha]) filas[v.fecha] = { fecha: v.fecha, montosPorSucursal: {}, totalDia: 0, registrosPorSucursal: {} };
+      filas[v.fecha].montosPorSucursal[v.sucursal] = (filas[v.fecha].montosPorSucursal[v.sucursal] || 0) + (Number(v.total) || 0);
+      filas[v.fecha].totalDia += (Number(v.total) || 0);
+      if (!filas[v.fecha].registrosPorSucursal[v.sucursal]) filas[v.fecha].registrosPorSucursal[v.sucursal] = [];
+      filas[v.fecha].registrosPorSucursal[v.sucursal].push(v);
+    });
+    return Object.values(filas).sort((a, b) => {
+      const [da, ma, ya] = a.fecha.split("/"); const [db, mb, yb] = b.fecha.split("/");
+      return new Date(yb, mb - 1, db) - new Date(ya, ma - 1, da);
+    });
+  }, [ventasRaw, filtroSucursal, filtroMes, filtroUltimos10]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -225,9 +212,15 @@ function App() {
           const data = userSnap.data();
           setUsuario(user);
           setDatosUsuario(data);
+
+          // CORRECCIÓN INMEDIATA: Asignar sucursal antes de cargar catálogos
+          if (data.rol === "vendedor" && data.sucursalAsignada) {
+            setSucursalSeleccionada(data.sucursalAsignada);
+          }
+
           if (data.estado === "aprobado") setFechaCierre(obtenerFechaActual());
         } else {
-          const perfilBasico = { nombre: user.displayName || "Usuario", email: user.email, rol: "vendedor", estado: "pendiente" };
+          const perfilBasico = { nombre: user.displayName || "Usuario", email: user.email, rol: "vendedor", estado: "pendiente", sucursalAsignada: "" };
           await setDoc(userRef, perfilBasico);
           setUsuario(user); setDatosUsuario(perfilBasico);
         }
@@ -247,10 +240,19 @@ function App() {
         const sRef = doc(db, "catalogos", "sucursales");
         const tRef = doc(db, "catalogos", "tipos_venta");
         const [sSnap, tSnap] = await Promise.all([getDoc(sRef), getDoc(tRef)]);
+
         if (sSnap.exists()) {
-          setSucursales(sSnap.data().items);
-          setSucursalSeleccionada(sSnap.data().items[0]);
+          const items = sSnap.data().items;
+          setSucursales(items);
+
+          // REGLA DE PROTECCIÓN: No sobrescribir si ya hay una sucursal forzada por el rol
+          if (datosUsuario.rol === "admin") {
+            setSucursalSeleccionada(items[0]);
+          } else if (datosUsuario.rol === "vendedor" && datosUsuario.sucursalAsignada) {
+            setSucursalSeleccionada(datosUsuario.sucursalAsignada);
+          }
         }
+
         if (tSnap.exists()) {
           const items = tSnap.data().items;
           setTiposVenta(items);
@@ -261,54 +263,31 @@ function App() {
       } catch (e) { console.error("Error catálogos:", e); }
     };
 
-    // Listener Ventas
     const qV = query(collection(db, "ventas"), orderBy("lastUpdated", "desc"));
     const unsubVentas = onSnapshot(qV, (snap) => {
-      const dataRaw = snap.docs.map(d => ({ id: d.id, ...d.data(), fecha: formatearFecha(d.data().fecha) }));
+      let dataRaw = snap.docs.map(d => ({ id: d.id, ...d.data(), fecha: formatearFecha(d.data().fecha) }));
+      if (datosUsuario.rol === "vendedor" && datosUsuario.sucursalAsignada) {
+        dataRaw = dataRaw.filter(v => v.sucursal === datosUsuario.sucursalAsignada);
+      }
       setVentasRaw(dataRaw);
 
-      const ahora = new Date();
-      const añoActual = ahora.getFullYear();
-      const mesActual = ahora.getMonth();
-      const diaSemana = ahora.getDay();
+      const ahora = new Date(); const añoActual = ahora.getFullYear(); const mesActual = ahora.getMonth(); const diaSemana = ahora.getDay();
       const diffLun = ahora.getDate() - diaSemana + (diaSemana === 0 ? -6 : 1);
-      const lunesActual = new Date(new Date().setDate(diffLun));
-      lunesActual.setHours(0,0,0,0);
-      const lunesAnterior = new Date(lunesActual);
-      lunesAnterior.setDate(lunesAnterior.getDate() - 7);
-      const mesAnteriorDate = new Date(añoActual, mesActual - 1, 1);
-      const mesAnterior = mesAnteriorDate.getMonth();
-      const añoMesAnterior = mesAnteriorDate.getFullYear();
-
-      let totalAnual = 0; let totalMesActual = 0; let totalMesAnterior = 0;
-      let totalSemanaActual = 0; let totalSemanaAnterior = 0;
-      let mesSucursal = { "Lebu": 0, "Los Álamos": 0, "Cañete": 0 };
-      let evolucionSemanal = [0, 0, 0, 0, 0, 0, 0];
-
+      const lunesActual = new Date(new Date().setDate(diffLun)); lunesActual.setHours(0,0,0,0);
+      const lunesAnterior = new Date(lunesActual); lunesAnterior.setDate(lunesAnterior.getDate() - 7);
+      const mesAnteriorDate = new Date(añoActual, mesActual - 1, 1); const mesAnterior = mesAnteriorDate.getMonth(); const añoMesAnterior = mesAnteriorDate.getFullYear();
+      let totalAnual = 0; let totalMesActual = 0; let totalMesAnterior = 0; let totalSemanaActual = 0; let totalSemanaAnterior = 0;
+      let mesSucursal = { "Lebu": 0, "Los Álamos": 0, "Cañete": 0 }; let evolucionSemanal = [0, 0, 0, 0, 0, 0, 0];
       dataRaw.forEach(v => {
-        const [d, m, y] = v.fecha.split("/");
-        const fechaVenta = new Date(y, m - 1, d);
-        const monto = Number(v.total) || 0;
+        const [d, m, y] = v.fecha.split("/"); const fechaVenta = new Date(y, m - 1, d); const monto = Number(v.total) || 0;
         if (fechaVenta.getFullYear() === añoActual) totalAnual += monto;
-        if (fechaVenta.getFullYear() === añoActual && fechaVenta.getMonth() === mesActual) {
-          totalMesActual += monto;
-          if (mesSucursal.hasOwnProperty(v.sucursal)) mesSucursal[v.sucursal] += monto;
-        } else if (fechaVenta.getFullYear() === añoMesAnterior && fechaVenta.getMonth() === mesAnterior) {
-          totalMesAnterior += monto;
-        }
-        if (fechaVenta >= lunesActual) {
-          totalSemanaActual += monto;
-          let idx = fechaVenta.getDay();
-          let corr = idx === 0 ? 6 : idx - 1;
-          if (corr >= 0 && corr <= 6) evolucionSemanal[corr] += monto;
-        } else if (fechaVenta >= lunesAnterior && fechaVenta < lunesActual) {
-          totalSemanaAnterior += monto;
-        }
+        if (fechaVenta.getFullYear() === añoActual && fechaVenta.getMonth() === mesActual) { totalMesActual += monto; if (mesSucursal.hasOwnProperty(v.sucursal)) mesSucursal[v.sucursal] += monto; }
+        else if (fechaVenta.getFullYear() === añoMesAnterior && fechaVenta.getMonth() === mesAnterior) totalMesAnterior += monto;
+        if (fechaVenta >= lunesActual) { totalSemanaActual += monto; let idx = fechaVenta.getDay(); let corr = idx === 0 ? 6 : idx - 1; if (corr >= 0 && corr <= 6) evolucionSemanal[corr] += monto; }
+        else if (fechaVenta >= lunesAnterior && fechaVenta < lunesActual) totalSemanaAnterior += monto;
       });
-
       const calcularTendencia = (act, ant) => ant === 0 ? (act > 0 ? 100 : 0) : ((act - ant) / ant) * 100;
       const mejorSuc = Object.entries(mesSucursal).reduce((a, b) => b[1] > a[1] ? b : a, ["-", 0])[0];
-
       setMetricasWeb({
         anualGlobal: totalAnual, mensualSucursal: mesSucursal, semanalEvolucion: evolucionSemanal,
         tendenciaSemana: calcularTendencia(totalSemanaActual, totalSemanaAnterior),
@@ -318,44 +297,14 @@ function App() {
       });
     });
 
-    // Listener Comunicaciones (Sincronización Android)
     const qC = query(collection(db, "comunicaciones"), orderBy("fecha", "desc"));
     const unsubComs = onSnapshot(qC, (snap) => {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setComunicaciones(data);
     });
 
-    cargarCatalogos();
-    return () => { unsubVentas(); unsubComs(); };
+    cargarCatalogos(); return () => { unsubVentas(); unsubComs(); };
   }, [usuario, datosUsuario]);
-
-  const historialComparativo = useMemo(() => {
-    const hoy = new Date();
-    const diezDiasAtras = new Date(); diezDiasAtras.setDate(hoy.getDate() - 10); diezDiasAtras.setHours(0,0,0,0);
-    const filtradas = ventasRaw.filter(v => {
-      const [d, m, y] = v.fecha.split("/"); const fVenta = new Date(y, m - 1, d);
-      if (filtroSucursal !== "" && v.sucursal !== filtroSucursal) return false;
-      if (filtroUltimos10 && fVenta < diezDiasAtras) return false;
-      if (!filtroUltimos10 && filtroMes !== "") {
-        const mesVenta = `${m}/${y}`; if (mesVenta !== filtroMes) return false;
-      }
-      return true;
-    });
-    const filas = {};
-    filtradas.forEach(v => {
-      if (!filas[v.fecha]) {
-        filas[v.fecha] = { fecha: v.fecha, montosPorSucursal: {}, totalDia: 0, registrosPorSucursal: {} };
-      }
-      filas[v.fecha].montosPorSucursal[v.sucursal] = (filas[v.fecha].montosPorSucursal[v.sucursal] || 0) + (Number(v.total) || 0);
-      filas[v.fecha].totalDia += (Number(v.total) || 0);
-      if (!filas[v.fecha].registrosPorSucursal[v.sucursal]) filas[v.fecha].registrosPorSucursal[v.sucursal] = [];
-      filas[v.fecha].registrosPorSucursal[v.sucursal].push(v);
-    });
-    return Object.values(filas).sort((a, b) => {
-      const [da, ma, ya] = a.fecha.split("/"); const [db, mb, yb] = b.fecha.split("/");
-      return new Date(yb, mb - 1, db) - new Date(ya, ma - 1, da);
-    });
-  }, [ventasRaw, filtroSucursal, filtroMes, filtroUltimos10]);
 
   const [ventasInputs, setVentasInputs] = useState({});
   const [totalGeneral, setTotalGeneral] = useState(0);
@@ -370,10 +319,8 @@ function App() {
 
   const limpiarFormulario = () => {
     if (window.confirm("¿Desea limpiar todos los datos ingresados?")) {
-      const reset = {};
-      tiposVenta.forEach(t => reset[t] = "");
-      setVentasInputs(reset);
-      setSucursalSeleccionada(sucursales[0] || "");
+      const reset = {}; tiposVenta.forEach(t => reset[t] = ""); setVentasInputs(reset);
+      if (datosUsuario.rol !== "vendedor") setSucursalSeleccionada(sucursales[0] || "");
     }
   };
 
@@ -426,14 +373,14 @@ function App() {
     );
   }
 
-  const puedeEditarFecha = datosUsuario?.rol === "admin" || datosUsuario?.rol === "super_usuario";
+  const esAdmin = datosUsuario?.rol === "admin";
+  const puedeEditarFecha = esAdmin || datosUsuario?.rol === "super_usuario";
 
   const renderContenido = () => {
     switch (vista) {
       case "ventas":
         return (
           <div className="ventas-view-layout">
-            {/* MURO DE COMUNICACIONES (Sincronizado con Android) */}
             {comunicaciones.length > 0 && (
               <section className="comms-muro-web">
                 <div className="muro-header-mini">Muro de Comunicaciones</div>
@@ -442,11 +389,7 @@ function App() {
                     .filter(m => m.alcance === "Todas" || m.alcance === datosUsuario?.sucursalAsignada)
                     .map(msg => (
                       <div key={msg.id} className={`comm-pill ${msg.prioridad?.toLowerCase()}`}>
-                        <div className="pill-top">
-                          <span className="pill-prio-dot"></span>
-                          <span className="pill-title">{msg.titulo}</span>
-                          <span className="pill-date">{formatearFechaHoraLong(msg.fecha)}</span>
-                        </div>
+                        <div className="pill-top"><span className="pill-prio-dot"></span><span className="pill-title">{msg.titulo}</span><span className="pill-date">{formatearFechaHoraLong(msg.fecha)}</span></div>
                         <p className="pill-content">{msg.contenido}</p>
                         <div className="pill-footer">Por: {msg.autor} • {msg.alcance}</div>
                       </div>
@@ -454,14 +397,17 @@ function App() {
                 </div>
               </section>
             )}
-
             <section className="card form-section">
               <h2>Registrar Cierre</h2>
               <form onSubmit={guardarCierre}>
                 <div className="top-inputs">
                   <div className="field">
                     <label>Sucursal</label>
-                    <select value={sucursalSeleccionada} onChange={(e) => setSucursalSeleccionada(e.target.value)}>
+                    <select
+                      value={sucursalSeleccionada}
+                      onChange={(e) => setSucursalSeleccionada(e.target.value)}
+                      disabled={!esAdmin}
+                    >
                       {sucursales.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
@@ -488,6 +434,10 @@ function App() {
         );
 
       case "analisis":
+        if (!esAdmin) {
+          setVista("ventas");
+          return null;
+        }
         return (
           <div className="analisis-layout">
             <nav className="sub-nav">
@@ -496,39 +446,19 @@ function App() {
               <button className={subVista === "sucursales" ? "active" : ""} onClick={() => setSubVista("sucursales")}>Sucursales</button>
               <button className={subVista === "alertas" ? "active" : ""} onClick={() => setSubVista("alertas")}>Alertas</button>
             </nav>
-
             <div className="sub-vista-content">
               {subVista === "historial" && (
                 <section className="history-comparative">
                   <div className="filters-bar card">
-                    <div className="filter-item">
-                      <label>Sucursal</label>
-                      <select value={filtroSucursal} onChange={(e) => setFiltroSucursal(e.target.value)}>
-                        <option value="">Todas las sucursales</option>
-                        {sucursales.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
-                    <div className="filter-item">
-                      <label>Rango</label>
-                      <div className="toggle-filters">
-                        <button className={filtroUltimos10 ? "active" : ""} onClick={() => setFiltroUltimos10(true)}>Últimos 10 días</button>
-                        <button className={!filtroUltimos10 ? "active" : ""} onClick={() => setFiltroUltimos10(false)}>Ver todos</button>
-                      </div>
-                    </div>
+                    <div className="filter-item"><label>Sucursal</label><select value={filtroSucursal} onChange={(e) => setFiltroSucursal(e.target.value)}><option value="">Todas las sucursales</option>{sucursales.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+                    <div className="filter-item"><label>Rango</label><div className="toggle-filters"><button className={filtroUltimos10 ? "active" : ""} onClick={() => setFiltroUltimos10(true)}>Últimos 10 días</button><button className={!filtroUltimos10 ? "active" : ""} onClick={() => setFiltroUltimos10(false)}>Ver todos</button></div></div>
                   </div>
                   <div className="table-responsive-container card">
                     <table className="comparative-table">
-                      <thead>
-                        <tr>
-                          <th>Fecha</th>
-                          {sucursales.map(s => <th key={s}>{s}</th>)}
-                          <th className="col-total">Total Día</th>
-                        </tr>
-                      </thead>
+                      <thead><tr><th>Fecha</th>{sucursales.map(s => <th key={s}>{s}</th>)}<th className="col-total">Total Día</th></tr></thead>
                       <tbody>
                         {historialComparativo.map(fila => {
-                          const canExpand = filtroSucursal !== "";
-                          const isExpanded = canExpand && expandedId === fila.fecha;
+                          const canExpand = filtroSucursal !== ""; const isExpanded = canExpand && expandedId === fila.fecha;
                           return (
                             <React.Fragment key={fila.fecha}>
                               <tr>
@@ -547,7 +477,6 @@ function App() {
                   </div>
                 </section>
               )}
-
               {subVista === "metricas" && (
                 <div className="metricas-web-view">
                   <div className="executive-summary-top">
@@ -576,101 +505,25 @@ function App() {
                       {["LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB", "DOM"].map((dia, idx) => {
                         const esHoy = (new Date().getDay() === (idx === 6 ? 0 : idx + 1));
                         return (
-                          <div key={dia} className={`chart-col ${esHoy ? 'today' : ''}`}>
-                            <span className="val-text">${(metricasWeb.semanalEvolucion[idx] || 0).toLocaleString("es-CL")}</span>
-                            <div className="chart-bar-fill" style={{height: `${Math.min((metricasWeb.semanalEvolucion[idx] / (Math.max(...metricasWeb.semanalEvolucion) || 1)) * 140, 140)}px`}}></div>
-                            <span className="chart-label">{dia}</span>
-                          </div>
+                          <div key={dia} className={`chart-col ${esHoy ? 'today' : ''}`}><span className="val-text">${(metricasWeb.semanalEvolucion[idx] || 0).toLocaleString("es-CL")}</span><div className="chart-bar-fill" style={{height: `${Math.min((metricasWeb.semanalEvolucion[idx] / (Math.max(...metricasWeb.semanalEvolucion) || 1)) * 140, 140)}px`}}></div><span className="chart-label">{dia}</span></div>
                         );
                       })}
                     </div>
                   </div>
                 </div>
               )}
-
               {subVista === "sucursales" && (
                 <div className="sucursales-web-view">
                   {!sucursalDetalle ? (
-                    <div className="sucursales-grid-main">
-                      {sucursales.map(s => {
-                        const m = sucursalesMetricas[s]; const tend = ((m.mensual - m.mensualAnterior) / (m.mensualAnterior || 1)) * 100;
-                        return (
-                          <div key={s} className="card sucursal-exec-card" onClick={() => setSucursalDetalle(s)}>
-                            <div className="s-card-header"><h3>{s}</h3><div className={`trend-indicator ${tend >= 0 ? 'up' : 'down'}`}>{tend >= 0 ? '▲' : '▼'} {Math.abs(Math.round(tend))}%</div></div>
-                            <div className="s-card-stats"><div className="s-stat"><span className="label">Total Mes</span><strong>${m.mensual.toLocaleString("es-CL")}</strong></div><div className="s-stat"><span className="label">Total Año</span><strong>${m.anual.toLocaleString("es-CL")}</strong></div></div>
-                            <div className="s-card-footer"><span>{m.cierresCount} cierres registrados</span><button className="btn-view">Ver Detalle</button></div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                    <div className="sucursales-grid-main">{sucursales.map(s => { const m = sucursalesMetricas[s]; const tend = ((m.mensual - m.mensualAnterior) / (m.mensualAnterior || 1)) * 100; return (<div key={s} className="card sucursal-exec-card" onClick={() => setSucursalDetalle(s)}><div className="s-card-header"><h3>{s}</h3><div className={`trend-indicator ${tend >= 0 ? 'up' : 'down'}`}>{tend >= 0 ? '▲' : '▼'} {Math.abs(Math.round(tend))}%</div></div><div className="s-card-stats"><div className="s-stat"><span className="label">Total Mes</span><strong>${m.mensual.toLocaleString("es-CL")}</strong></div><div className="s-stat"><span className="label">Total Año</span><strong>${m.anual.toLocaleString("es-CL")}</strong></div></div><div className="s-card-footer"><span>{m.cierresCount} cierres registrados</span><button className="btn-view">Ver Detalle</button></div></div>); })}</div>
                   ) : (
                     <div className="sucursal-detail-view">
                       <header className="detail-header"><button className="btn-back" onClick={() => {setSucursalDetalle(null); setFechaCalendario(null)}}>← Volver</button><h2>{sucursalDetalle}</h2></header>
-                      <div className="detail-summary-grid">
-                        <div className="card summary-box"><span className="label">Total Año</span><strong>${sucursalesMetricas[sucursalDetalle].anual.toLocaleString("es-CL")}</strong></div>
-                        <div className="card summary-box"><span className="label">Total Mes</span><strong>${sucursalesMetricas[sucursalDetalle].mensual.toLocaleString("es-CL")}</strong></div>
-                        <div className="card summary-box"><span className="label">Promedio Diario</span><strong>${Math.round(sucursalesMetricas[sucursalDetalle].anual / (sucursalesMetricas[sucursalDetalle].cierresCount || 1)).toLocaleString("es-CL")}</strong></div>
-                        <div className="card summary-box"><span className="label">Cierres</span><strong>{sucursalesMetricas[sucursalDetalle].cierresCount}</strong></div>
-                      </div>
+                      <div className="detail-summary-grid"><div className="card summary-box"><span className="label">Total Año</span><strong>${sucursalesMetricas[sucursalDetalle].anual.toLocaleString("es-CL")}</strong></div><div className="card summary-box"><span className="label">Total Mes</span><strong>${sucursalesMetricas[sucursalDetalle].mensual.toLocaleString("es-CL")}</strong></div><div className="card summary-box"><span className="label">Promedio Diario</span><strong>${Math.round(sucursalesMetricas[sucursalDetalle].anual / (sucursalesMetricas[sucursalDetalle].cierresCount || 1)).toLocaleString("es-CL")}</strong></div><div className="card summary-box"><span className="label">Cierres</span><strong>{sucursalesMetricas[sucursalDetalle].cierresCount}</strong></div></div>
                       <div className="detail-layout-columns">
-                        <div className="detail-col-left">
-                          <section className="card distribution-section">
-                            <h3>Distribución por Tipo de Venta</h3>
-                            <div className="dist-list">
-                              {Object.entries(sucursalesMetricas[sucursalDetalle].distribucion).sort((a,b) => b[1] - a[1]).map(([tipo, total]) => {
-                                const perc = (total / (sucursalesMetricas[sucursalDetalle].anual || 1)) * 100;
-                                return (
-                                  <div key={tipo} className="dist-item"><div className="dist-info"><span className="dist-name">{tipo}</span><span className="dist-perc">{Math.round(perc)}%</span></div><div className="dist-bar-bg"><div className="dist-bar-fill" style={{width: `${perc}%`}}></div></div><span className="dist-total">${total.toLocaleString("es-CL")}</span></div>
-                                );
-                              })}
-                            </div>
-                          </section>
-                        </div>
+                        <div className="detail-col-left"><section className="card distribution-section"><h3>Distribución por Tipo de Venta</h3><div className="dist-list">{Object.entries(sucursalesMetricas[sucursalDetalle].distribucion).sort((a,b) => b[1] - a[1]).map(([tipo, total]) => { const perc = (total / (sucursalesMetricas[sucursalDetalle].anual || 1)) * 100; return (<div key={tipo} className="dist-item"><div className="dist-info"><span className="dist-name">{tipo}</span><span className="dist-perc">{Math.round(perc)}%</span></div><div className="dist-bar-bg"><div className="dist-bar-fill" style={{width: `${perc}%`}}></div></div><span className="dist-total">${total.toLocaleString("es-CL")}</span></div>); })}</div></section></div>
                         <div className="detail-col-right">
-                          <section className="card calendar-section">
-                            <div className="calendar-header-nav">
-                              <h3>Calendario</h3>
-                              <div className="cal-nav-btns">
-                                <button onClick={() => setMesVista(new Date(mesVista.setMonth(mesVista.getMonth() - 1)))}>←</button>
-                                <span>{mesVista.toLocaleString("es-CL", { month: 'long', year: 'numeric' }).toUpperCase()}</span>
-                                <button onClick={() => setMesVista(new Date(mesVista.setMonth(mesVista.getMonth() + 1)))}>→</button>
-                              </div>
-                            </div>
-                            <div className="calendar-grid-full">
-                              {["LU", "MA", "MI", "JU", "VI", "SA", "DO"].map(d => <div key={d} className="cal-day-label">{d}</div>)}
-                              {(() => {
-                                const start = new Date(mesVista.getFullYear(), mesVista.getMonth(), 1);
-                                const end = new Date(mesVista.getFullYear(), mesVista.getMonth() + 1, 0);
-                                const days = [];
-                                let firstDayIdx = start.getDay();
-                                firstDayIdx = firstDayIdx === 0 ? 6 : firstDayIdx - 1;
-                                for (let i = 0; i < firstDayIdx; i++) days.push(<div key={`empty-${i}`} className="cal-day-empty"></div>);
-                                for (let d = 1; d <= end.getDate(); d++) {
-                                  const fechaKey = `${String(d).padStart(2, '0')}/${String(mesVista.getMonth() + 1).padStart(2, '0')}/${mesVista.getFullYear()}`;
-                                  const tieneVenta = sucursalesMetricas[sucursalDetalle].calendario[fechaKey];
-                                  days.push(
-                                    <button key={d} className={`cal-day-box ${fechaCalendario === fechaKey ? 'active' : ''} ${tieneVenta ? 'has-data' : ''}`} onClick={() => setFechaCalendario(fechaCalendario === fechaKey ? null : fechaKey)}>
-                                      <span className="day-num">{d}</span>
-                                      {tieneVenta && <span className="day-dot"></span>}
-                                    </button>
-                                  );
-                                }
-                                return days;
-                              })()}
-                            </div>
-                            {fechaCalendario && (
-                              <div className="day-detail-box">
-                                <h4>Detalle del {fechaCalendario}</h4>
-                                {sucursalesMetricas[sucursalDetalle].calendario[fechaCalendario] ? (
-                                  <>
-                                    <div className="day-total-hero">${sucursalesMetricas[sucursalDetalle].calendario[fechaCalendario].total.toLocaleString("es-CL")}</div>
-                                    <div className="day-registros">{sucursalesMetricas[sucursalDetalle].calendario[fechaCalendario].registros.map(reg => (<div key={reg.id} className="day-reg-item"><span>{reg.tipo}</span><strong>${Number(reg.total).toLocaleString("es-CL")}</strong></div>))}</div>
-                                  </>
-                                ) : <div className="no-data-msg">Sin registros para esta fecha</div>}
-                                <p className="read-only-note">Modo solo lectura</p>
-                              </div>
-                            )}
-                          </section>
+                          <section className="card calendar-section"><div className="calendar-header-nav"><h3>Calendario</h3><div className="cal-nav-btns"><button onClick={() => setMesVista(new Date(mesVista.setMonth(mesVista.getMonth() - 1)))}>←</button><span>{mesVista.toLocaleString("es-CL", { month: 'long', year: 'numeric' }).toUpperCase()}</span><button onClick={() => setMesVista(new Date(mesVista.setMonth(mesVista.getMonth() + 1)))}>→</button></div></div><div className="calendar-grid-full">{["LU", "MA", "MI", "JU", "VI", "SA", "DO"].map(d => <div key={d} className="cal-day-label">{d}</div>)}{(() => { const start = new Date(mesVista.getFullYear(), mesVista.getMonth(), 1); const end = new Date(mesVista.getFullYear(), mesVista.getMonth() + 1, 0); const days = []; let firstDayIdx = start.getDay(); firstDayIdx = firstDayIdx === 0 ? 6 : firstDayIdx - 1; for (let i = 0; i < firstDayIdx; i++) days.push(<div key={`empty-${i}`} className="cal-day-empty"></div>); for (let d = 1; d <= end.getDate(); d++) { const fechaKey = `${String(d).padStart(2, '0')}/${String(mesVista.getMonth() + 1).padStart(2, '0')}/${mesVista.getFullYear()}`; const tieneVenta = sucursalesMetricas[sucursalDetalle].calendario[fechaKey]; days.push(<button key={d} className={`cal-day-box ${fechaCalendario === fechaKey ? 'active' : ''} ${tieneVenta ? 'has-data' : ''}`} onClick={() => setFechaCalendario(fechaCalendario === fechaKey ? null : fechaKey)}><span className="day-num">{d}</span>{tieneVenta && <span className="day-dot"></span>}</button>); } return days; })()}</div>{fechaCalendario && (<div className="day-detail-box"><h4>Detalle del {fechaCalendario}</h4>{sucursalesMetricas[sucursalDetalle].calendario[fechaCalendario] ? (<><div className="day-total-hero">${sucursalesMetricas[sucursalDetalle].calendario[fechaCalendario].total.toLocaleString("es-CL")}</div><div className="day-registros">{sucursalesMetricas[sucursalDetalle].calendario[fechaCalendario].registros.map(reg => (<div key={reg.id} className="day-reg-item"><span>{reg.tipo}</span><strong>${Number(reg.total).toLocaleString("es-CL")}</strong></div>))}</div></>) : <div className="no-data-msg">Sin registros para esta fecha</div>}<p className="read-only-note">Modo solo lectura</p></div>)}</section>
                         </div>
                       </div>
                     </div>
@@ -681,31 +534,15 @@ function App() {
                 <div className="alertas-web-view">
                   <h2 className="section-title">Alertas Operacionales</h2>
                   {alertasOperacionales.length === 0 ? (
-                    <div className="card no-alerts-card">
-                      <span className="check-icon">✅</span>
-                      <p>Sin alertas operacionales</p>
-                      <small>El sistema no detectó irregularidades hoy.</small>
-                    </div>
+                    <div className="card no-alerts-card"><span className="check-icon">✅</span><p>Sin alertas operacionales</p><small>El sistema no detectó irregularidades hoy.</small></div>
                   ) : (
-                    <div className="alertas-grid">
-                      {alertasOperacionales.map(alerta => (
-                        <div key={alerta.id} className={`alerta-card ${alerta.prioridad}`}>
-                          <div className="alerta-icon">{alerta.icono}</div>
-                          <div className="alerta-content">
-                            <span className="alerta-suc">{alerta.sucursal}</span>
-                            <p className="alerta-msg">{alerta.mensaje}</p>
-                          </div>
-                          <div className="alerta-badge">{alerta.prioridad.toUpperCase()}</div>
-                        </div>
-                      ))}
-                    </div>
+                    <div className="alertas-grid">{alertasOperacionales.map(alerta => (<div key={alerta.id} className={`alerta-card ${alerta.prioridad}`}><div className="alerta-icon">{alerta.icono}</div><div className="alerta-content"><span className="alerta-suc">{alerta.sucursal}</span><p className="alerta-msg">{alerta.mensaje}</p></div><div className="alerta-badge">{alerta.prioridad.toUpperCase()}</div></div>))}</div>
                   )}
                 </div>
               )}
             </div>
           </div>
         );
-
 
       default: return null;
     }
@@ -718,7 +555,9 @@ function App() {
           <span className="brand">ERP Edumaco 2.0</span>
           <div className="main-nav-tabs">
             <button className={vista === "ventas" ? "active" : ""} onClick={() => setVista("ventas")}>Ventas</button>
-            <button className={vista === "analisis" ? "active" : ""} onClick={() => setVista("analisis")}>Análisis</button>
+            {esAdmin && (
+              <button className={vista === "analisis" ? "active" : ""} onClick={() => setVista("analisis")}>Análisis</button>
+            )}
           </div>
           <div className="user-nav">
             <div className="user-info-display">
