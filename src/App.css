@@ -50,6 +50,54 @@ body {
   z-index: 1000;
 }
 
+/* PWA Install Banner */
+.pwa-install-banner {
+  background: var(--primary-color);
+  color: white;
+  padding: 0.75rem 1rem;
+  position: sticky;
+  top: 0;
+  z-index: 2000;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.pwa-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.pwa-content span {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.btn-install {
+  background: white;
+  color: var(--primary-color);
+  border: none;
+  padding: 0.4rem 1rem;
+  border-radius: 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-close-pwa {
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 1.5rem;
+  font-weight: 300;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
 .nav-container {
   max-width: 1200px;
   margin: 0 auto;

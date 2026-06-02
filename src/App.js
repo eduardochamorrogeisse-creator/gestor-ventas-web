@@ -52,6 +52,11 @@ function App() {
   const [ventasRaw, setVentasRaw] = useState([]);
   const [comunicaciones, setComunicaciones] = useState([]);
 
+  // ESTADOS PWA
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
+  const [isIos, setIsIos] = useState(false);
+
   // ESTADOS FORMULARIO COMUNICACIONES (ADMIN)
   const [tituloCom, setTituloCom] = useState("");
   const [contenidoCom, setContenidoCom] = useState("");
@@ -183,6 +188,26 @@ function App() {
   }, [ventasRaw, filtroSucursal, filtroMes, filtroUltimos10]);
 
   useEffect(() => {
+    const handleBeforeInstallPrompt = (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+      setShowInstallBanner(true);
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+
+    // Detectar iOS
+    const isIosDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+    if (isIosDevice && !isStandalone) {
+      setIsIos(true);
+      setShowInstallBanner(true);
+    }
+
+    return () => window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+  }, []);
+
+  useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         const userRef = doc(db, "usuarios", user.uid);
@@ -270,6 +295,16 @@ function App() {
   }, [ventasInputs]);
 
   const manejarCambioInput = (tipo, valor) => setVentasInputs(prev => ({ ...prev, [tipo]: valor }));
+
+  const handleInstallClick = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setInstallPrompt(null);
+      setShowInstallBanner(false);
+    }
+  };
 
   const limpiarFormulario = () => {
     if (window.confirm("¿Desea limpiar todos los datos ingresados?")) {
@@ -416,6 +451,15 @@ function App() {
 
   return (
     <div className="dashboard-layout">
+      {showInstallBanner && (
+        <div className="pwa-install-banner">
+          <div className="pwa-content">
+            <span>{isIos ? "Instala la App: Pulsa Compartir → Agregar a pantalla de inicio" : "Instala nuestra App para una mejor experiencia"}</span>
+            {!isIos && <button onClick={handleInstallClick} className="btn-install">Instalar</button>}
+            <button onClick={() => setShowInstallBanner(false)} className="btn-close-pwa">×</button>
+          </div>
+        </div>
+      )}
       <header className="navbar">
         <div className="nav-container">
           <span className="brand">Sistema de Ventas Librería Edumaco</span>
