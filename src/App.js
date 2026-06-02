@@ -314,7 +314,7 @@ function App() {
   };
 
   if (loading) return <div className="loader-screen"><h1>Cargando sistema...</h1></div>;
-  if (!usuario) return (<div className="login-page"><div className="login-card"><h1>Gestor Pro</h1><p>Inicie sesión para continuar</p><button onClick={iniciarSesion} className="btn-google">Entrar con Google</button></div></div>);
+  if (!usuario) return (<div className="login-page"><div className="login-card"><h1>Sistema de Ventas Librería Edumaco</h1><p>Inicie sesión para continuar</p><button onClick={iniciarSesion} className="btn-google">Entrar con Google</button></div></div>);
   if (datosUsuario && datosUsuario.estado !== "aprobado") return (<div className="login-page"><div className="login-card"><h2 style={{color: datosUsuario.estado === "rechazado" ? "red" : "orange"}}>Acceso {datosUsuario.estado === "rechazado" ? "Rechazado" : "Restringido"}</h2><p>Tu cuenta ({usuario.email}) está en estado "{datosUsuario.estado}".</p><button onClick={() => signOut(auth)} className="btn-logout">Cerrar Sesión</button></div></div>);
 
   const esAdmin = datosUsuario?.rol === "admin";
@@ -418,7 +418,7 @@ function App() {
     <div className="dashboard-layout">
       <header className="navbar">
         <div className="nav-container">
-          <span className="brand">ERP Edumaco 2.0</span>
+          <span className="brand">Sistema de Ventas Librería Edumaco</span>
           <div className="main-nav-tabs">
             <button className={vista === "ventas" ? "active" : ""} onClick={() => setVista("ventas")}>Ventas</button>
             {esAdmin && ( <button className={vista === "analisis" ? "active" : ""} onClick={() => setVista("analisis")}>Análisis</button> )}
