@@ -190,7 +190,7 @@ function App() {
         if (userSnap.exists()) {
           const data = userSnap.data();
           setUsuario(user);
-          setDatosUsuario({ ...data, sucursalAsignada: data.sucursalAsignada || "" });
+          setDatosUsuario({ ...data, uid: user.uid, sucursalAsignada: data.sucursalAsignada || "" });
           if (data.rol === "vendedor" && data.sucursalAsignada) setSucursalSeleccionada(data.sucursalAsignada);
           if (data.estado === "aprobado") setFechaCierre(obtenerFechaActual());
         } else {
@@ -296,24 +296,11 @@ function App() {
     } catch (e) { alert("Error de conexión o permisos denegados."); }
   };
 
-  // --- FUNCIÓN PUBLICAR COMUNICACIÓN (SOLO ADMIN) ---
   const publicarComunicacion = async (e) => {
-    e.preventDefault();
-    if (!tituloCom || !contenidoCom) return alert("Título y Contenido obligatorios.");
+    e.preventDefault(); if (!tituloCom || !contenidoCom) return alert("Título y Contenido obligatorios.");
     try {
-      const nuevaCom = {
-        titulo: tituloCom.trim(),
-        contenido: contenidoCom.trim(),
-        autor: usuario.displayName || usuario.email,
-        fecha: Date.now(), // Long compatible con Android
-        prioridad: prioridadCom,
-        alcance: alcanceCom,
-        leidoPor: [], // Estándar Android
-        completadoPor: [] // Estándar Android
-      };
-      await addDoc(collection(db, "comunicaciones"), nuevaCom);
-      alert("Comunicación publicada ✔");
-      setTituloCom(""); setContenidoCom("");
+      const nuevaCom = { titulo: tituloCom.trim(), contenido: contenidoCom.trim(), autor: usuario.displayName || usuario.email, fecha: Date.now(), prioridad: prioridadCom, alcance: alcanceCom };
+      await addDoc(collection(db, "comunicaciones"), nuevaCom); alert("Comunicación publicada ✔"); setTituloCom(""); setContenidoCom("");
     } catch (e) { alert("Error al publicar."); }
   };
 
@@ -338,29 +325,16 @@ function App() {
       case "ventas":
         return (
           <div className="ventas-view-layout">
-            {/* PANEL CREACIÓN (SOLO ADMIN) */}
             {esAdmin && (
               <section className="card admin-publish-panel">
                 <h3>📢 Nueva Comunicación</h3>
                 <form onSubmit={publicarComunicacion} className="publish-form">
-                  <div className="publish-grid">
-                    <input type="text" placeholder="Título del mensaje..." value={tituloCom} onChange={(e) => setTituloCom(e.target.value)} required />
-                    <select value={prioridadCom} onChange={(e) => setPrioridadCom(e.target.value)}>
-                      <option value="Baja">Prioridad Baja</option>
-                      <option value="Media">Prioridad Media</option>
-                      <option value="Alta">Prioridad Alta</option>
-                    </select>
-                    <select value={alcanceCom} onChange={(e) => setAlcanceCom(e.target.value)}>
-                      <option value="Todas">Todas las Sucursales</option>
-                      {sucursales.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
+                  <div className="publish-grid"><input type="text" placeholder="Título del mensaje..." value={tituloCom} onChange={(e) => setTituloCom(e.target.value)} required /><select value={prioridadCom} onChange={(e) => setPrioridadCom(e.target.value)}><option value="Baja">Prioridad Baja</option><option value="Media">Prioridad Media</option><option value="Alta">Prioridad Alta</option></select><select value={alcanceCom} onChange={(e) => setAlcanceCom(e.target.value)}><option value="Todas">Todas las Sucursales</option>{sucursales.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
                   <textarea placeholder="Escriba la instrucción o aviso aquí..." value={contenidoCom} onChange={(e) => setContenidoCom(e.target.value)} required rows="3"></textarea>
                   <button type="submit" className="btn-save">Publicar en el Muro</button>
                 </form>
               </section>
             )}
-
             {comunicaciones.length > 0 && (
               <section className="comms-muro-web">
                 <div className="muro-header-mini">Muro de Comunicaciones</div>
@@ -405,7 +379,9 @@ function App() {
                     <div className="filter-item"><label>Sucursal</label><select value={filtroSucursal} onChange={(e) => setFiltroSucursal(e.target.value)}><option value="">Todas las sucursales</option>{sucursales.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
                     <div className="filter-item"><label>Rango</label><div className="toggle-filters"><button className={filtroUltimos10 ? "active" : ""} onClick={() => setFiltroUltimos10(true)}>Últimos 10 días</button><button className={!filtroUltimos10 ? "active" : ""} onClick={() => setFiltroUltimos10(false)}>Ver todos</button></div></div>
                   </div>
-                  <div className="table-responsive-container card"><table className="comparative-table"><thead><tr><th>Fecha</th>{sucursales.map(s => <th key={s}>{s}</th>)}<th className="col-total">Total Día</th></tr></thead><tbody>{historialComparativo.map(fila => { const canExpand = filtroSucursal !== ""; const isExpanded = canExpand && expandedId === fila.fecha; return (<React.Fragment key={fila.fecha}><tr><td className={`cell-date ${canExpand ? 'clickable' : ''}`} onClick={() => canExpand && setExpandedId(isExpanded ? null : fila.fecha)}>{fila.fecha}</td>{sucursales.map(s => (<td key={s} className="cell-amount">{fila.montosPorSucursal[s] ? `$${fila.montosPorSucursal[s].toLocaleString("es-CL")}` : "-"}</td>))}<td className="cell-total-dia">${fila.totalDia.toLocaleString("es-CL")}</td></tr>{isExpanded && fila.registrosPorSucursal[filtroSucursal] && (<tr className="detail-row"><td colSpan={sucursales.length + 2}><div className="table-detail-content"><div className="detail-header-mini">Desglose de {filtroSucursal} - {fila.fecha}</div><div className="detail-items-grid">{fila.registrosPorSucursal[filtroSucursal].map(reg => (<div key={reg.id} className="detail-item-pill"><span className="pill-type">{reg.tipo}</span><span className="pill-amount">${Number(reg.total).toLocaleString("es-CL")}</span><button onClick={() => eliminarRegistro(reg.id)} className="btn-delete-x">×</button></div>))}</div></div></td></tr>)}</React.Fragment>); })}</tbody></table></div>
+                  <div className="table-responsive-container card"><table className="comparative-table"><thead><tr><th>Fecha</th>{sucursales.map(s => <th key={s}>{s}</th>)}<th className="col-total">Total Día</th></tr></thead><tbody>{historialComparativo.map(fila => { const canExpand = filtroSucursal !== ""; const isExpanded = canExpand && expandedId === fila.fecha; return (<React.Fragment key={fila.fecha}><tr><td className={`cell-date ${canExpand ? 'clickable' : ''}`} onClick={() => canExpand && setExpandedId(isExpanded ? null : fila.fecha)}>{fila.fecha}</td>{sucursales.map(s => (<td key={s} className="cell-amount">{fila.montosPorSucursal[s] ? `$${fila.montosPorSucursal[s].toLocaleString("es-CL")}` : "-"}</td>))}<td className="cell-total-dia">${fila.totalDia.toLocaleString("es-CL")}</td></tr>{isExpanded && fila.registrosPorSucursal[filtroSucursal] && (
+                                <tr className="detail-row"><td colSpan={sucursales.length + 2}><div className="table-detail-content"><div className="detail-header-mini">Desglose de {filtroSucursal} - {fila.fecha}</div><div className="detail-items-grid">{fila.registrosPorSucursal[filtroSucursal].map(reg => (<div key={reg.id} className="detail-item-pill"><span className="pill-type">{reg.tipo}</span><span className="pill-amount">${Number(reg.total).toLocaleString("es-CL")}</span><button onClick={() => eliminarRegistro(reg.id)} className="btn-delete-x">×</button></div>))}</div></div></td></tr>
+                              )}</React.Fragment>); })}</tbody></table></div>
                 </section>
               )}
               {subVista === "metricas" && (
@@ -419,7 +395,9 @@ function App() {
               {subVista === "sucursales" && (
                 <div className="sucursales-web-view">
                   {!sucursalDetalle ? (<div className="sucursales-grid-main">{sucursales.map(s => { const m = sucursalesMetricas[s]; const tend = ((m.mensual - m.mensualAnterior) / (m.mensualAnterior || 1)) * 100; return (<div key={s} className="card sucursal-exec-card" onClick={() => setSucursalDetalle(s)}><div className="s-card-header"><h3>{s}</h3><div className={`trend-indicator ${tend >= 0 ? 'up' : 'down'}`}>{tend >= 0 ? '▲' : '▼'} {Math.abs(Math.round(tend))}%</div></div><div className="s-card-stats"><div className="s-stat"><span className="label">Total Mes</span><strong>${m.mensual.toLocaleString("es-CL")}</strong></div><div className="s-stat"><span className="label">Total Año</span><strong>${m.anual.toLocaleString("es-CL")}</strong></div></div><div className="s-card-footer"><span>{m.cierresCount} cierres registrados</span><button className="btn-view">Ver Detalle</button></div></div>); })}</div>) : (
-                    <div className="sucursal-detail-view"><header className="detail-header"><button className="btn-back" onClick={() => {setSucursalDetalle(null); setFechaCalendario(null)}}>← Volver</button><h2>{sucursalDetalle}</h2></header><div className="detail-summary-grid"><div className="card summary-box"><span className="label">Total Año</span><strong>${sucursalesMetricas[sucursalDetalle].anual.toLocaleString("es-CL")}</strong></div><div className="card summary-box"><span className="label">Total Mes</span><strong>${sucursalesMetricas[sucursalDetalle].mensual.toLocaleString("es-CL")}</strong></div><div className="card summary-box"><span className="label">Promedio Diario</span><strong>${Math.round(sucursalesMetricas[sucursalDetalle].anual / (sucursalesMetricas[sucursalDetalle].cierresCount || 1)).toLocaleString("es-CL")}</strong></div><div className="card summary-box"><span className="label">Cierres</span><strong>{sucursalesMetricas[sucursalDetalle].cierresCount}</strong></div></div><div className="detail-layout-columns"><div className="detail-col-left"><section className="card distribution-section"><h3>Distribución por Tipo de Venta</h3><div className="dist-list">{Object.entries(sucursalesMetricas[sucursalDetalle].distribucion).sort((a,b) => b[1] - a[1]).map(([tipo, total]) => { const perc = (total / (sucursalesMetricas[sucursalDetalle].anual || 1)) * 100; return (<div key={tipo} className="dist-item"><div className="dist-info"><span className="dist-name">{tipo}</span><span className="dist-perc">{Math.round(perc)}%</span></div><div className="dist-bar-bg"><div className="dist-bar-fill" style={{width: `${perc}%`}}></div></div><span className="dist-total">${total.toLocaleString("es-CL")}</span></div>); })}</div></section></div><div className="detail-col-right"><section className="card calendar-section"><div className="calendar-header-nav"><h3>Calendario</h3><div className="cal-nav-btns"><button onClick={() => setMesVista(new Date(mesVista.setMonth(mesVista.getMonth() - 1)))}>←</button><span>{mesVista.toLocaleString("es-CL", { month: 'long', year: 'numeric' }).toUpperCase()}</span><button onClick={() => setMesVista(new Date(mesVista.setMonth(mesVista.getMonth() + 1)))}>→</button></div></div><div className="calendar-grid-full">{["LU", "MA", "MI", "JU", "VI", "SA", "DO"].map(d => <div key={d} className="cal-day-label">{d}</div>)}{(() => { const start = new Date(mesVista.getFullYear(), mesVista.getMonth(), 1); const end = new Date(mesVista.getFullYear(), mesVista.getMonth() + 1, 0); const days = []; let firstDayIdx = start.getDay(); firstDayIdx = firstDayIdx === 0 ? 6 : firstDayIdx - 1; for (let i = 0; i < firstDayIdx; i++) days.push(<div key={`empty-${i}`} className="cal-day-empty"></div>); for (let d = 1; d <= end.getDate(); d++) { const fechaKey = `${String(d).padStart(2, '0')}/${String(mesVista.getMonth() + 1).padStart(2, '0')}/${mesVista.getFullYear()}`; const tieneVenta = sucursalesMetricas[sucursalDetalle].calendario[fechaKey]; days.push(<button key={d} className={`cal-day-box ${fechaCalendario === fechaKey ? 'active' : ''} ${tieneVenta ? 'has-data' : ''}`} onClick={() => setFechaCalendario(fechaCalendario === fechaKey ? null : fechaKey)}><span className="day-num">{d}</span>{tieneVenta && <span className="day-dot"></span>}</button>); } return days; })()}</div>{fechaCalendario && (<div className="day-detail-box"><h4>Detalle del {fechaCalendario}</h4>{sucursalesMetricas[sucursalDetalle].calendario[fechaCalendario] ? (<><div className="day-total-hero">${sucursalesMetricas[sucursalDetalle].calendario[fechaCalendario].total.toLocaleString("es-CL")}</div><div className="day-registros">{sucursalesMetricas[sucursalDetalle].calendario[fechaCalendario].registros.map(reg => (<div key={reg.id} className="day-reg-item"><span>{reg.tipo}</span><strong>${Number(reg.total).toLocaleString("es-CL")}</strong></div>))}</div></>) : <div className="no-data-msg">Sin registros para esta fecha</div>}<p className="read-only-note">Modo solo lectura</p></div>)}</section></div></div></div>
+                    <div className="sucursal-detail-view"><header className="detail-header"><button className="btn-back" onClick={() => {setSucursalDetalle(null); setFechaCalendario(null)}}>← Volver</button><h2>{sucursalDetalle}</h2></header><div className="detail-summary-grid"><div className="card summary-box"><span className="label">Total Año</span><strong>${sucursalesMetricas[sucursalDetalle].anual.toLocaleString("es-CL")}</strong></div><div className="card summary-box"><span className="label">Total Mes</span><strong>${sucursalesMetricas[sucursalDetalle].mensual.toLocaleString("es-CL")}</strong></div><div className="card summary-box"><span className="label">Promedio Diario</span><strong>${Math.round(sucursalesMetricas[sucursalDetalle].anual / (sucursalesMetricas[sucursalDetalle].cierresCount || 1)).toLocaleString("es-CL")}</strong></div><div className="card summary-box"><span className="label">Cierres</span><strong>{sucursalesMetricas[sucursalDetalle].cierresCount}</strong></div></div><div className="detail-layout-columns"><div className="detail-col-left"><section className="card distribution-section"><h3>Distribución por Tipo de Venta</h3><div className="dist-list">{Object.entries(sucursalesMetricas[sucursalDetalle].distribucion).sort((a,b) => b[1] - a[1]).map(([tipo, total]) => { const perc = (total / (sucursalesMetricas[sucursalDetalle].anual || 1)) * 100; return (<div key={tipo} className="dist-item"><div className="dist-info"><span className="dist-name">{tipo}</span><span className="dist-perc">{Math.round(perc)}%</span></div><div className="dist-bar-bg"><div className="dist-bar-fill" style={{width: `${perc}%`}}></div></div><span className="dist-total">${total.toLocaleString("es-CL")}</span></div>); })}</div></section></div><div className="detail-col-right">
+                          <section className="card calendar-section"><div className="calendar-header-nav"><h3>Calendario</h3><div className="cal-nav-btns"><button onClick={() => setMesVista(new Date(mesVista.setMonth(mesVista.getMonth() - 1)))}>←</button><span>{mesVista.toLocaleString("es-CL", { month: 'long', year: 'numeric' }).toUpperCase()}</span><button onClick={() => setMesVista(new Date(mesVista.setMonth(mesVista.getMonth() + 1)))}>→</button></div></div><div className="calendar-grid-full">{["LU", "MA", "MI", "JU", "VI", "SA", "DO"].map(d => <div key={d} className="cal-day-label">{d}</div>)}{(() => { const start = new Date(mesVista.getFullYear(), mesVista.getMonth(), 1); const end = new Date(mesVista.getFullYear(), mesVista.getMonth() + 1, 0); const days = []; let firstDayIdx = start.getDay(); firstDayIdx = firstDayIdx === 0 ? 6 : firstDayIdx - 1; for (let i = 0; i < firstDayIdx; i++) days.push(<div key={`empty-${i}`} className="cal-day-empty"></div>); for (let d = 1; d <= end.getDate(); d++) { const fechaKey = `${String(d).padStart(2, '0')}/${String(mesVista.getMonth() + 1).padStart(2, '0')}/${mesVista.getFullYear()}`; const tieneVenta = sucursalesMetricas[sucursalDetalle].calendario[fechaKey]; days.push(<button key={d} className={`cal-day-box ${fechaCalendario === fechaKey ? 'active' : ''} ${tieneVenta ? 'has-data' : ''}`} onClick={() => setFechaCalendario(fechaCalendario === fechaKey ? null : fechaKey)}><span className="day-num">{d}</span>{tieneVenta && <span className="day-dot"></span>}</button>); } return days; })()}</div>{fechaCalendario && (<div className="day-detail-box"><h4>Detalle del {fechaCalendario}</h4>{sucursalesMetricas[sucursalDetalle].calendario[fechaCalendario] ? (<><div className="day-total-hero">${sucursalesMetricas[sucursalDetalle].calendario[fechaCalendario].total.toLocaleString("es-CL")}</div><div className="day-registros">{sucursalesMetricas[sucursalDetalle].calendario[fechaCalendario].registros.map(reg => (<div key={reg.id} className="day-reg-item"><span>{reg.tipo}</span><strong>${Number(reg.total).toLocaleString("es-CL")}</strong></div>))}</div></>) : <div className="no-data-msg">Sin registros para esta fecha</div>}<p className="read-only-note">Modo solo lectura</p></div>)}</section>
+                        </div></div></div>
                   )}
                 </div>
               )}
