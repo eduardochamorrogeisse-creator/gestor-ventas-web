@@ -179,6 +179,12 @@ body {
   gap: 0.75rem;
 }
 
+/* Ajuste preventivo para evitar que inputs largos rompan el layout */
+.publish-form input, .publish-form select, .publish-form textarea {
+  width: 100%;
+  max-width: 100%;
+}
+
 .publish-form input, .publish-form select, .publish-form textarea {
   padding: 0.6rem 1rem;
   border: 1px solid var(--border-color);
@@ -415,6 +421,16 @@ body {
   .sub-nav button {
     min-width: 0; /* Permitir que se ajusten al grid */
     padding: 0.75rem 0.25rem;
+  }
+
+  /* Formulario de Publicación: Apilado vertical para evitar desbordamiento */
+  .publish-grid {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+
+  .publish-form .btn-save {
+    align-self: stretch; /* Botón ancho completo en móvil */
   }
 
   .amount-hero { font-size: 1.5rem; }
