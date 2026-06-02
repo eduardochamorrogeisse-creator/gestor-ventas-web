@@ -49,6 +49,7 @@ function App() {
   const [sucursalSeleccionada, setSucursalSeleccionada] = useState("");
   const [tiposVenta, setTiposVenta] = useState(["S/B", "Boleta", "Factura", "Transferencia", "Debito/Credito"]);
   const [ventasRaw, setVentasRaw] = useState([]);
+  const [comunicaciones, setComunicaciones] = useState([]);
 
   // MÉTRICAS WEB 2.1
   const [metricasWeb, setMetricasWeb] = useState({
@@ -84,15 +85,23 @@ function App() {
     return stringBase.split(" ")[0].trim();
   };
 
+  const formatearFechaHoraLong = (ms) => {
+    if (!ms) return "";
+    const d = new Date(ms);
+    return d.toLocaleDateString("es-CL") + " " + d.toLocaleTimeString("es-CL", { hour: '2-digit', minute: '2-digit' });
+  };
+
   const sanitizarTipoParaId = (tipo) => {
     if (!tipo) return "Otros";
     return tipo
       .replace(/á/g, "a").replace(/é/g, "e").replace(/í/g, "i").replace(/ó/g, "o").replace(/ú/g, "u")
       .replace(/Á/g, "A").replace(/É/g, "E").replace(/Í/g, "I").replace(/Ó/g, "O").replace(/Ú/g, "U")
-      .replace(/\//g, "").replace(/\s+/g, "").replace(/[^a-zA-Z0-9]/g, "");
+      .replace(/\//g, "")
+      .replace(/\s+/g, "")
+      .replace(/[^a-zA-Z0-9]/g, "");
   };
 
-  // --- PROCESAMIENTO DE SUCURSALES ---
+  // --- PROCESAMIENTO DE SUCURSALES WEB 2.0 ---
   const sucursalesMetricas = useMemo(() => {
     const ahora = new Date();
     const añoActual = ahora.getFullYear();
@@ -103,7 +112,14 @@ function App() {
 
     const stats = {};
     sucursales.forEach(s => {
-      stats[s] = { anual: 0, mensual: 0, mensualAnterior: 0, cierresCount: 0, distribucion: {}, calendario: {} };
+      stats[s] = {
+        anual: 0,
+        mensual: 0,
+        mensualAnterior: 0,
+        cierresCount: 0,
+        distribucion: {},
+        calendario: {}
+      };
     });
 
     ventasRaw.forEach(v => {
@@ -111,9 +127,16 @@ function App() {
       const [d, m, y] = v.fecha.split("/");
       const fVenta = new Date(y, m - 1, d);
       const monto = Number(v.total) || 0;
-      if (fVenta.getFullYear() === añoActual) stats[v.sucursal].anual += monto;
-      if (fVenta.getFullYear() === añoActual && fVenta.getMonth() === mesActual) stats[v.sucursal].mensual += monto;
-      else if (fVenta.getFullYear() === añoMesAnterior && fVenta.getMonth() === mesAnterior) stats[v.sucursal].mensualAnterior += monto;
+
+      if (fVenta.getFullYear() === añoActual) {
+        stats[v.sucursal].anual += monto;
+      }
+      if (fVenta.getFullYear() === añoActual && fVenta.getMonth() === mesActual) {
+        stats[v.sucursal].mensual += monto;
+      } else if (fVenta.getFullYear() === añoMesAnterior && fVenta.getMonth() === mesAnterior) {
+        stats[v.sucursal].mensualAnterior += monto;
+      }
+
       if (!stats[v.sucursal].calendario[v.fecha]) {
         stats[v.sucursal].calendario[v.fecha] = { total: 0, registros: [] };
         stats[v.sucursal].cierresCount++;
@@ -122,85 +145,76 @@ function App() {
       stats[v.sucursal].calendario[v.fecha].registros.push(v);
       stats[v.sucursal].distribucion[v.tipo] = (stats[v.sucursal].distribucion[v.tipo] || 0) + monto;
     });
+
     return stats;
   }, [ventasRaw, sucursales]);
 
-  // --- MOTOR DE ALERTAS ---
+  // --- MOTOR DE ALERTAS OPERACIONALES WEB 2.0 ---
   const alertasOperacionales = useMemo(() => {
     const alertas = [];
     const hoyStr = obtenerFechaActual();
     const ahora = new Date();
+
     const stats = {};
     sucursales.forEach(s => stats[s] = { hoy: 0, diarios: {}, tipos: {} });
+
     ventasRaw.forEach(v => {
       if (!stats[v.sucursal]) return;
       const [d, m, y] = v.fecha.split("/");
       const fVenta = new Date(y, m - 1, d);
       const diffDias = Math.floor((ahora - fVenta) / (1000 * 60 * 60 * 24));
       const monto = Number(v.total) || 0;
+
       if (v.fecha === hoyStr) {
         stats[v.sucursal].hoy += monto;
         stats[v.sucursal].tipos[v.tipo] = (stats[v.sucursal].tipos[v.tipo] || 0) + monto;
       }
-      if (diffDias > 0 && diffDias <= 14) stats[v.sucursal].diarios[v.fecha] = (stats[v.sucursal].diarios[v.fecha] || 0) + monto;
+
+      if (diffDias > 0 && diffDias <= 14) {
+        stats[v.sucursal].diarios[v.fecha] = (stats[v.sucursal].diarios[v.fecha] || 0) + monto;
+      }
     });
+
     sucursales.forEach(s => {
       const st = stats[s];
-      if (st.hoy === 0) alertas.push({ id: `no-data-${s}`, sucursal: s, mensaje: `${s} no registra cierres hoy`, prioridad: "alta", icono: "⚠️" });
-      const historico = Object.entries(st.diarios).sort((a, b) => {
-        const [da, ma, ya] = a[0].split("/"); const [db, mb, yb] = b[0].split("/");
-        return new Date(yb, mb - 1, db) - new Date(ya, ma - 1, da);
-      }).map(x => x[1]);
+
+      if (st.hoy === 0) {
+        alertas.push({ id: `no-data-${s}`, sucursal: s, mensaje: `${s} no registra cierres hoy`, prioridad: "alta", icono: "⚠️" });
+      }
+
+      const historico = Object.entries(st.diarios)
+        .sort((a, b) => {
+          const [da, ma, ya] = a[0].split("/"); const [db, mb, yb] = b[0].split("/");
+          return new Date(yb, mb-1, db) - new Date(ya, ma-1, da);
+        })
+        .map(x => x[1]);
+
       const avg7d = historico.slice(0, 7).reduce((a, b) => a + b, 0) / 7;
       if (st.hoy > 0 && avg7d > 0) {
         const caida = ((avg7d - st.hoy) / avg7d) * 100;
-        if (caida >= 40) alertas.push({ id: `caida-${s}`, sucursal: s, mensaje: `${s} cayó ${Math.round(caida)}% respecto al promedio semanal`, prioridad: "alta", icono: "▼" });
+        if (caida >= 40) {
+          alertas.push({ id: `caida-${s}`, sucursal: s, mensaje: `${s} cayó ${Math.round(caida)}% respecto al promedio semanal`, prioridad: "alta", icono: "▼" });
+        }
       }
+
       if (st.hoy > 0 && historico.length >= 2) {
-        if (st.hoy < historico[0] && historico[0] < historico[1]) alertas.push({ id: `trend-${s}`, sucursal: s, mensaje: `${s} registra tendencia negativa por 3 días`, prioridad: "media", icono: "📉" });
+        if (st.hoy < historico[0] && historico[0] < historico[1]) {
+          alertas.push({ id: `trend-${s}`, sucursal: s, mensaje: `${s} registra tendencia negativa por 3 días`, prioridad: "media", icono: "📉" });
+        }
       }
+
       if (st.hoy > 0) {
         Object.entries(st.tipos).forEach(([tipo, monto]) => {
           const perc = (monto / st.hoy) * 100;
-          if (perc > 85) alertas.push({ id: `extreme-${s}-${tipo}`, sucursal: s, mensaje: `${tipo} representa ${Math.round(perc)}% de las ventas en ${s}`, prioridad: "baja", icono: "⚖️" });
+          if (perc > 85) {
+            alertas.push({ id: `extreme-${s}-${tipo}`, sucursal: s, mensaje: `${tipo} representa ${Math.round(perc)}% de las ventas en ${s}`, prioridad: "baja", icono: "⚖️" });
+          }
         });
       }
     });
+
     return alertas;
   }, [ventasRaw, sucursales]);
-
-  // --- LÓGICA DE FILTRADO Y AGRUPAMIENTO COMPARATIVO (HISTORIAL) ---
-  const historialComparativo = useMemo(() => {
-    const hoy = new Date();
-    const diezDiasAtras = new Date(); diezDiasAtras.setDate(hoy.getDate() - 10); diezDiasAtras.setHours(0,0,0,0);
-
-    const filtradas = ventasRaw.filter(v => {
-      const [d, m, y] = v.fecha.split("/"); const fVenta = new Date(y, m - 1, d);
-      if (filtroSucursal !== "" && v.sucursal !== filtroSucursal) return false;
-      if (filtroUltimos10 && fVenta < diezDiasAtras) return false;
-      if (!filtroUltimos10 && filtroMes !== "") {
-        const mesVenta = `${m}/${y}`; if (mesVenta !== filtroMes) return false;
-      }
-      return true;
-    });
-
-    const filas = {};
-    filtradas.forEach(v => {
-      if (!filas[v.fecha]) {
-        filas[v.fecha] = { fecha: v.fecha, montosPorSucursal: {}, totalDia: 0, registrosPorSucursal: {} };
-      }
-      filas[v.fecha].montosPorSucursal[v.sucursal] = (filas[v.fecha].montosPorSucursal[v.sucursal] || 0) + (Number(v.total) || 0);
-      filas[v.fecha].totalDia += (Number(v.total) || 0);
-
-      if (!filas[v.fecha].registrosPorSucursal[v.sucursal]) filas[v.fecha].registrosPorSucursal[v.sucursal] = [];
-      filas[v.fecha].registrosPorSucursal[v.sucursal].push(v);
-    });
-
-    return Object.values(filas).sort((a, b) => {
-      const [da, ma, ya] = a.fecha.split("/"); const [db, mb, yb] = b.fecha.split("/");
-      return new Date(yb, mb - 1, db) - new Date(ya, ma - 1, da);
-    });
-  }, [ventasRaw, filtroSucursal, filtroMes, filtroUltimos10]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -209,7 +223,8 @@ function App() {
         const userSnap = await getDoc(userRef);
         if (userSnap.exists()) {
           const data = userSnap.data();
-          setUsuario(user); setDatosUsuario(data);
+          setUsuario(user);
+          setDatosUsuario(data);
           if (data.estado === "aprobado") setFechaCierre(obtenerFechaActual());
         } else {
           const perfilBasico = { nombre: user.displayName || "Usuario", email: user.email, rol: "vendedor", estado: "pendiente" };
@@ -226,6 +241,7 @@ function App() {
 
   useEffect(() => {
     if (!usuario || datosUsuario?.estado !== "aprobado") return;
+
     const cargarCatalogos = async () => {
       try {
         const sRef = doc(db, "catalogos", "sucursales");
@@ -244,27 +260,55 @@ function App() {
         }
       } catch (e) { console.error("Error catálogos:", e); }
     };
-    const q = query(collection(db, "ventas"), orderBy("lastUpdated", "desc"));
-    const unsubVentas = onSnapshot(q, (snap) => {
+
+    // Listener Ventas
+    const qV = query(collection(db, "ventas"), orderBy("lastUpdated", "desc"));
+    const unsubVentas = onSnapshot(qV, (snap) => {
       const dataRaw = snap.docs.map(d => ({ id: d.id, ...d.data(), fecha: formatearFecha(d.data().fecha) }));
       setVentasRaw(dataRaw);
-      const ahora = new Date(); const añoActual = ahora.getFullYear(); const mesActual = ahora.getMonth(); const diaSemana = ahora.getDay();
+
+      const ahora = new Date();
+      const añoActual = ahora.getFullYear();
+      const mesActual = ahora.getMonth();
+      const diaSemana = ahora.getDay();
       const diffLun = ahora.getDate() - diaSemana + (diaSemana === 0 ? -6 : 1);
-      const lunesActual = new Date(new Date().setDate(diffLun)); lunesActual.setHours(0,0,0,0);
-      const lunesAnterior = new Date(lunesActual); lunesAnterior.setDate(lunesAnterior.getDate() - 7);
-      const mesAnteriorDate = new Date(añoActual, mesActual - 1, 1); const mesAnterior = mesAnteriorDate.getMonth(); const añoMesAnterior = mesAnteriorDate.getFullYear();
-      let totalAnual = 0; let totalMesActual = 0; let totalMesAnterior = 0; let totalSemanaActual = 0; let totalSemanaAnterior = 0;
-      let mesSucursal = { "Lebu": 0, "Los Álamos": 0, "Cañete": 0 }; let evolucionSemanal = [0, 0, 0, 0, 0, 0, 0];
+      const lunesActual = new Date(new Date().setDate(diffLun));
+      lunesActual.setHours(0,0,0,0);
+      const lunesAnterior = new Date(lunesActual);
+      lunesAnterior.setDate(lunesAnterior.getDate() - 7);
+      const mesAnteriorDate = new Date(añoActual, mesActual - 1, 1);
+      const mesAnterior = mesAnteriorDate.getMonth();
+      const añoMesAnterior = mesAnteriorDate.getFullYear();
+
+      let totalAnual = 0; let totalMesActual = 0; let totalMesAnterior = 0;
+      let totalSemanaActual = 0; let totalSemanaAnterior = 0;
+      let mesSucursal = { "Lebu": 0, "Los Álamos": 0, "Cañete": 0 };
+      let evolucionSemanal = [0, 0, 0, 0, 0, 0, 0];
+
       dataRaw.forEach(v => {
-        const [d, m, y] = v.fecha.split("/"); const fechaVenta = new Date(y, m - 1, d); const monto = Number(v.total) || 0;
+        const [d, m, y] = v.fecha.split("/");
+        const fechaVenta = new Date(y, m - 1, d);
+        const monto = Number(v.total) || 0;
         if (fechaVenta.getFullYear() === añoActual) totalAnual += monto;
-        if (fechaVenta.getFullYear() === añoActual && fechaVenta.getMonth() === mesActual) { totalMesActual += monto; if (mesSucursal.hasOwnProperty(v.sucursal)) mesSucursal[v.sucursal] += monto; }
-        else if (fechaVenta.getFullYear() === añoMesAnterior && fechaVenta.getMonth() === mesAnterior) totalMesAnterior += monto;
-        if (fechaVenta >= lunesActual) { totalSemanaActual += monto; let idx = fechaVenta.getDay(); let corr = idx === 0 ? 6 : idx - 1; if (corr >= 0 && corr <= 6) evolucionSemanal[corr] += monto; }
-        else if (fechaVenta >= lunesAnterior && fechaVenta < lunesActual) totalSemanaAnterior += monto;
+        if (fechaVenta.getFullYear() === añoActual && fechaVenta.getMonth() === mesActual) {
+          totalMesActual += monto;
+          if (mesSucursal.hasOwnProperty(v.sucursal)) mesSucursal[v.sucursal] += monto;
+        } else if (fechaVenta.getFullYear() === añoMesAnterior && fechaVenta.getMonth() === mesAnterior) {
+          totalMesAnterior += monto;
+        }
+        if (fechaVenta >= lunesActual) {
+          totalSemanaActual += monto;
+          let idx = fechaVenta.getDay();
+          let corr = idx === 0 ? 6 : idx - 1;
+          if (corr >= 0 && corr <= 6) evolucionSemanal[corr] += monto;
+        } else if (fechaVenta >= lunesAnterior && fechaVenta < lunesActual) {
+          totalSemanaAnterior += monto;
+        }
       });
+
       const calcularTendencia = (act, ant) => ant === 0 ? (act > 0 ? 100 : 0) : ((act - ant) / ant) * 100;
       const mejorSuc = Object.entries(mesSucursal).reduce((a, b) => b[1] > a[1] ? b : a, ["-", 0])[0];
+
       setMetricasWeb({
         anualGlobal: totalAnual, mensualSucursal: mesSucursal, semanalEvolucion: evolucionSemanal,
         tendenciaSemana: calcularTendencia(totalSemanaActual, totalSemanaAnterior),
@@ -273,8 +317,45 @@ function App() {
         promedioDiarioSemanal: totalSemanaActual / (diaSemana === 0 ? 7 : diaSemana)
       });
     });
-    cargarCatalogos(); return () => unsubVentas();
+
+    // Listener Comunicaciones (Sincronización Android)
+    const qC = query(collection(db, "comunicaciones"), orderBy("fecha", "desc"));
+    const unsubComs = onSnapshot(qC, (snap) => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setComunicaciones(data);
+    });
+
+    cargarCatalogos();
+    return () => { unsubVentas(); unsubComs(); };
   }, [usuario, datosUsuario]);
+
+  const historialComparativo = useMemo(() => {
+    const hoy = new Date();
+    const diezDiasAtras = new Date(); diezDiasAtras.setDate(hoy.getDate() - 10); diezDiasAtras.setHours(0,0,0,0);
+    const filtradas = ventasRaw.filter(v => {
+      const [d, m, y] = v.fecha.split("/"); const fVenta = new Date(y, m - 1, d);
+      if (filtroSucursal !== "" && v.sucursal !== filtroSucursal) return false;
+      if (filtroUltimos10 && fVenta < diezDiasAtras) return false;
+      if (!filtroUltimos10 && filtroMes !== "") {
+        const mesVenta = `${m}/${y}`; if (mesVenta !== filtroMes) return false;
+      }
+      return true;
+    });
+    const filas = {};
+    filtradas.forEach(v => {
+      if (!filas[v.fecha]) {
+        filas[v.fecha] = { fecha: v.fecha, montosPorSucursal: {}, totalDia: 0, registrosPorSucursal: {} };
+      }
+      filas[v.fecha].montosPorSucursal[v.sucursal] = (filas[v.fecha].montosPorSucursal[v.sucursal] || 0) + (Number(v.total) || 0);
+      filas[v.fecha].totalDia += (Number(v.total) || 0);
+      if (!filas[v.fecha].registrosPorSucursal[v.sucursal]) filas[v.fecha].registrosPorSucursal[v.sucursal] = [];
+      filas[v.fecha].registrosPorSucursal[v.sucursal].push(v);
+    });
+    return Object.values(filas).sort((a, b) => {
+      const [da, ma, ya] = a.fecha.split("/"); const [db, mb, yb] = b.fecha.split("/");
+      return new Date(yb, mb - 1, db) - new Date(ya, ma - 1, da);
+    });
+  }, [ventasRaw, filtroSucursal, filtroMes, filtroUltimos10]);
 
   const [ventasInputs, setVentasInputs] = useState({});
   const [totalGeneral, setTotalGeneral] = useState(0);
@@ -293,7 +374,6 @@ function App() {
       tiposVenta.forEach(t => reset[t] = "");
       setVentasInputs(reset);
       setSucursalSeleccionada(sucursales[0] || "");
-      alert("Formulario reiniciado.");
     }
   };
 
@@ -352,35 +432,59 @@ function App() {
     switch (vista) {
       case "ventas":
         return (
-          <section className="card form-section">
-            <h2>Registrar Cierre</h2>
-            <form onSubmit={guardarCierre}>
-              <div className="top-inputs">
-                <div className="field">
-                  <label>Sucursal</label>
-                  <select value={sucursalSeleccionada} onChange={(e) => setSucursalSeleccionada(e.target.value)}>
-                    {sucursales.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
+          <div className="ventas-view-layout">
+            {/* MURO DE COMUNICACIONES (Sincronizado con Android) */}
+            {comunicaciones.length > 0 && (
+              <section className="comms-muro-web">
+                <div className="muro-header-mini">Muro de Comunicaciones</div>
+                <div className="muro-scroll-container">
+                  {comunicaciones
+                    .filter(m => m.alcance === "Todas" || m.alcance === datosUsuario?.sucursalAsignada)
+                    .map(msg => (
+                      <div key={msg.id} className={`comm-pill ${msg.prioridad?.toLowerCase()}`}>
+                        <div className="pill-top">
+                          <span className="pill-prio-dot"></span>
+                          <span className="pill-title">{msg.titulo}</span>
+                          <span className="pill-date">{formatearFechaHoraLong(msg.fecha)}</span>
+                        </div>
+                        <p className="pill-content">{msg.contenido}</p>
+                        <div className="pill-footer">Por: {msg.autor} • {msg.alcance}</div>
+                      </div>
+                    ))}
                 </div>
-                <div className="field">
-                  <label>Fecha</label>
-                  <input type="text" value={fechaCierre} onChange={(e) => setFechaCierre(e.target.value)} disabled={!puedeEditarFecha} />
+              </section>
+            )}
+
+            <section className="card form-section">
+              <h2>Registrar Cierre</h2>
+              <form onSubmit={guardarCierre}>
+                <div className="top-inputs">
+                  <div className="field">
+                    <label>Sucursal</label>
+                    <select value={sucursalSeleccionada} onChange={(e) => setSucursalSeleccionada(e.target.value)}>
+                      {sucursales.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Fecha</label>
+                    <input type="text" value={fechaCierre} onChange={(e) => setFechaCierre(e.target.value)} disabled={!puedeEditarFecha} />
+                  </div>
                 </div>
-              </div>
-              <div className="ventas-inputs-grid">
-                {tiposVenta.map(tipo => (
-                  <div className="field" key={tipo}><label>{tipo}</label><input type="number" placeholder="0" value={ventasInputs[tipo] || ""} onChange={(e) => manejarCambioInput(tipo, e.target.value)} /></div>
-                ))}
-              </div>
-              <div className="summary-bar">
-                <div className="total-box"><span className="label">Total:</span><span className="amount">${totalGeneral.toLocaleString("es-CL")}</span></div>
-                <div className="form-actions">
-                  <button type="submit" className="btn-save">Guardar Cierre Diario</button>
-                  <button type="button" onClick={limpiarFormulario} className="btn-clean">Limpiar</button>
+                <div className="ventas-inputs-grid">
+                  {tiposVenta.map(tipo => (
+                    <div className="field" key={tipo}><label>{tipo}</label><input type="number" placeholder="0" value={ventasInputs[tipo] || ""} onChange={(e) => manejarCambioInput(tipo, e.target.value)} /></div>
+                  ))}
                 </div>
-              </div>
-            </form>
-          </section>
+                <div className="summary-bar">
+                  <div className="total-box"><span className="label">Total:</span><span className="amount">${totalGeneral.toLocaleString("es-CL")}</span></div>
+                  <div className="form-actions">
+                    <button type="submit" className="btn-save">Guardar Cierre Diario</button>
+                    <button type="button" onClick={limpiarFormulario} className="btn-clean">Limpiar</button>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </div>
         );
 
       case "analisis":
@@ -412,7 +516,6 @@ function App() {
                       </div>
                     </div>
                   </div>
-
                   <div className="table-responsive-container card">
                     <table className="comparative-table">
                       <thead>
@@ -428,37 +531,13 @@ function App() {
                           const isExpanded = canExpand && expandedId === fila.fecha;
                           return (
                             <React.Fragment key={fila.fecha}>
-                              <tr className={isExpanded ? 'expanded-row-master' : ''}>
-                                <td
-                                  className={`cell-date ${canExpand ? 'clickable' : ''}`}
-                                  onClick={() => canExpand && setExpandedId(isExpanded ? null : fila.fecha)}
-                                >
-                                  {fila.fecha}
-                                </td>
-                                {sucursales.map(s => (
-                                  <td key={s} className="cell-amount">
-                                    {fila.montosPorSucursal[s] ? `$${fila.montosPorSucursal[s].toLocaleString("es-CL")}` : "-"}
-                                  </td>
-                                ))}
+                              <tr>
+                                <td className={`cell-date ${canExpand ? 'clickable' : ''}`} onClick={() => canExpand && setExpandedId(isExpanded ? null : fila.fecha)}>{fila.fecha}</td>
+                                {sucursales.map(s => (<td key={s} className="cell-amount">{fila.montosPorSucursal[s] ? `$${fila.montosPorSucursal[s].toLocaleString("es-CL")}` : "-"}</td>))}
                                 <td className="cell-total-dia">${fila.totalDia.toLocaleString("es-CL")}</td>
                               </tr>
                               {isExpanded && fila.registrosPorSucursal[filtroSucursal] && (
-                                <tr className="detail-row">
-                                  <td colSpan={sucursales.length + 2}>
-                                    <div className="table-detail-content">
-                                      <div className="detail-header-mini">Desglose de {filtroSucursal} - {fila.fecha}</div>
-                                      <div className="detail-items-grid">
-                                        {fila.registrosPorSucursal[filtroSucursal].map(reg => (
-                                          <div key={reg.id} className="detail-item-pill">
-                                            <span className="pill-type">{reg.tipo}</span>
-                                            <span className="pill-amount">${Number(reg.total).toLocaleString("es-CL")}</span>
-                                            <button onClick={() => eliminarRegistro(reg.id)} className="btn-delete-x">×</button>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  </td>
-                                </tr>
+                                <tr className="detail-row"><td colSpan={sucursales.length + 2}><div className="table-detail-content"><div className="detail-header-mini">Desglose de {filtroSucursal} - {fila.fecha}</div><div className="detail-items-grid">{fila.registrosPorSucursal[filtroSucursal].map(reg => (<div key={reg.id} className="detail-item-pill"><span className="pill-type">{reg.tipo}</span><span className="pill-amount">${Number(reg.total).toLocaleString("es-CL")}</span><button onClick={() => eliminarRegistro(reg.id)} className="btn-delete-x">×</button></div>))}</div></div></td></tr>
                               )}
                             </React.Fragment>
                           );
