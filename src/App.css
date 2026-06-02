@@ -150,6 +150,54 @@ body {
 .btn-clean { background: #f1f5f9; color: var(--text-muted); border: 1px solid var(--border-color); padding: 0.6rem 1.5rem; border-radius: 0.5rem; font-weight: 700; cursor: pointer; }
 .btn-clean:hover { background: #e2e8f0; color: var(--text-main); }
 
+/* --- PANEL DE PUBLICACIÓN (SOLO ADMIN) --- */
+.admin-publish-panel {
+  background: #f8fafc;
+  border: 1px solid var(--primary-color);
+  border-left-width: 8px;
+  margin-bottom: 2rem;
+}
+
+.admin-publish-panel h3 {
+  margin-top: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--primary-color);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.publish-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.publish-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1.5fr;
+  gap: 0.75rem;
+}
+
+.publish-form input, .publish-form select, .publish-form textarea {
+  padding: 0.6rem 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  font-size: 0.9rem;
+  background: white;
+}
+
+.publish-form textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+.publish-form .btn-save {
+  align-self: flex-end;
+  padding: 0.6rem 2rem;
+  font-size: 0.9rem;
+}
+
 /* --- MURO DE COMUNICACIONES WEB (SYNC ANDROID) --- */
 .comms-muro-web { margin-bottom: 2rem; }
 .muro-header-mini { font-size: 0.65rem; font-weight: 900; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.75rem; letter-spacing: 0.1em; }
