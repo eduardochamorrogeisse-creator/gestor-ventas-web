@@ -27,6 +27,8 @@ const RoleGuard = ({ user, allowedRoles, children, fallback = null }) => {
   return fallback;
 };
 
+const SUCURSALES_BASE = ["Lebu", "Los Álamos", "Cañete", "Cañete 2"];
+
 function App() {
   const [usuario, setUsuario] = useState(null);
   const [datosUsuario, setDatosUsuario] = useState(null);
@@ -46,7 +48,7 @@ function App() {
   const [mesVista, setMesVista] = useState(new Date());
 
   // Catálogos y Datos
-  const [sucursales, setSucursales] = useState(["Lebu", "Los Álamos", "Cañete"]);
+  const [sucursales, setSucursales] = useState(SUCURSALES_BASE);
   const [sucursalSeleccionada, setSucursalSeleccionada] = useState("");
   const [tiposVenta, setTiposVenta] = useState(["S/B", "Boleta", "Factura", "Transferencia", "Debito/Credito"]);
   const [ventasRaw, setVentasRaw] = useState([]);
@@ -233,18 +235,33 @@ function App() {
     if (!usuario || datosUsuario?.estado !== "aprobado") return;
     const cargarCatalogos = async () => {
       try {
-        const sRef = doc(db, "catalogos", "sucursales");
         const tRef = doc(db, "catalogos", "tipos_venta");
-        const [sSnap, tSnap] = await Promise.all([getDoc(sRef), getDoc(tRef)]);
-        if (sSnap.exists()) {
-          const items = sSnap.data().items; setSucursales(items);
-          if (datosUsuario.rol === "admin") setSucursalSeleccionada(items[0]);
+        const legacySucursalesRef = doc(db, "catalogos", "sucursales");
+        const [legacySucursalesSnap, tSnap] = await Promise.all([getDoc(legacySucursalesRef), getDoc(tRef)]);
+        const legacyItems = legacySucursalesSnap.exists() ? legacySucursalesSnap.data().items || [] : [];
+        const actualizarSucursales = (snapshot) => {
+          const itemsFirestore = snapshot.docs
+            .map((sucursalDoc) => sucursalDoc.data())
+            .filter((sucursal) => sucursal.activa !== false && typeof sucursal.nombre === "string")
+            .sort((a, b) => (Number(a.orden) || 0) - (Number(b.orden) || 0))
+            .map((sucursal) => sucursal.nombre.trim())
+            .filter(Boolean);
+          const catalogo = [...new Set([...legacyItems, ...itemsFirestore])];
+          const items = catalogo.length ? catalogo : SUCURSALES_BASE;
+          setSucursales(items);
+          if (datosUsuario.rol === "admin") setSucursalSeleccionada((actual) => actual && items.includes(actual) ? actual : items[0]);
           else if (datosUsuario.rol === "vendedor" && datosUsuario.sucursalAsignada) setSucursalSeleccionada(datosUsuario.sucursalAsignada);
+        };
+        const unsubSucursales = onSnapshot(collection(db, "sucursales"), actualizarSucursales, (e) => console.error("Error sucursales:", e));
+        if (legacyItems.length) {
+          const items = [...new Set(legacyItems)];
+          setSucursales(items);
         }
         if (tSnap.exists()) {
           const items = tSnap.data().items; setTiposVenta(items);
           const initialInputs = {}; items.forEach(t => initialInputs[t] = ""); setVentasInputs(initialInputs);
         }
+        return unsubSucursales;
       } catch (e) { console.error("Error catálogos:", e); }
     };
     const qV = query(collection(db, "ventas"), orderBy("lastUpdated", "desc"));
@@ -258,7 +275,7 @@ function App() {
       const lunesAnterior = new Date(lunesActual); lunesAnterior.setDate(lunesAnterior.getDate() - 7);
       const mesAnteriorDate = new Date(añoActual, mesActual - 1, 1); const mesAnterior = mesAnteriorDate.getMonth(); const añoMesAnterior = mesAnteriorDate.getFullYear();
       let totalAnual = 0; let totalMesActual = 0; let totalMesAnterior = 0; let totalSemanaActual = 0; let totalSemanaAnterior = 0;
-      let mesSucursal = { "Lebu": 0, "Los Álamos": 0, "Cañete": 0 }; let evolucionSemanal = [0, 0, 0, 0, 0, 0, 0];
+      let mesSucursal = { "Lebu": 0, "Los Álamos": 0, "Cañete": 0, "Cañete 2": 0 }; let evolucionSemanal = [0, 0, 0, 0, 0, 0, 0];
       dataRaw.forEach(v => {
         const [d, m, y] = v.fecha.split("/"); const fechaVenta = new Date(y, m - 1, d); const monto = Number(v.total) || 0;
         if (fechaVenta.getFullYear() === añoActual) totalAnual += monto;
@@ -282,7 +299,14 @@ function App() {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setComunicaciones(data);
     });
-    cargarCatalogos(); return () => { unsubVentas(); unsubComs(); };
+    let unsubSucursales = () => {};
+    let cancelled = false;
+    cargarCatalogos().then((unsubscribe) => {
+      if (!unsubscribe) return;
+      if (cancelled) unsubscribe();
+      else unsubSucursales = unsubscribe;
+    });
+    return () => { cancelled = true; unsubSucursales(); unsubVentas(); unsubComs(); };
   }, [usuario, datosUsuario]);
 
   const [ventasInputs, setVentasInputs] = useState({});
