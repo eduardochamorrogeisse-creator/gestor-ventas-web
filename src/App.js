@@ -40,8 +40,7 @@ function App() {
 
   // FILTROS Y ESTADOS DE ANÁLISIS
   const [filtroSucursal, setFiltroSucursal] = useState("");
-  const [filtroMes, setFiltroMes] = useState("");
-  const [filtroUltimos10, setFiltroUltimos10] = useState(true);
+  const [modoHistorial, setModoHistorial] = useState("ultimos10");
   const [expandedId, setExpandedId] = useState(null);
   const [sucursalDetalle, setSucursalDetalle] = useState(null);
   const [fechaCalendario, setFechaCalendario] = useState(null);
@@ -174,8 +173,7 @@ function App() {
     const filtradas = ventasRaw.filter(v => {
       const [d, m, y] = v.fecha.split("/"); const fVenta = new Date(y, m - 1, d);
       if (filtroSucursal !== "" && v.sucursal !== filtroSucursal) return false;
-      if (filtroUltimos10 && fVenta < diezDiasAtras) return false;
-      if (!filtroUltimos10 && filtroMes !== "") { const mesVenta = `${m}/${y}`; if (mesVenta !== filtroMes) return false; }
+      if (modoHistorial === "ultimos10" && fVenta < diezDiasAtras) return false;
       return true;
     });
     const filas = {};
@@ -187,7 +185,29 @@ function App() {
       filas[v.fecha].registrosPorSucursal[v.sucursal].push(v);
     });
     return Object.values(filas).sort((a, b) => { const [da, ma, ya] = a.fecha.split("/"); const [db, mb, yb] = b.fecha.split("/"); return new Date(yb, mb - 1, db) - new Date(ya, ma - 1, da); });
-  }, [ventasRaw, filtroSucursal, filtroMes, filtroUltimos10]);
+  }, [ventasRaw, filtroSucursal, modoHistorial]);
+
+  const historialMensual = useMemo(() => {
+    const filasPorMes = {};
+    ventasRaw.forEach((venta) => {
+      const partesFecha = venta.fecha.split("/");
+      if (partesFecha.length !== 3) return;
+      const [, mes, año] = partesFecha;
+      const claveMes = `${año}-${mes.padStart(2, "0")}`;
+      if (!filasPorMes[claveMes]) {
+        const fechaMes = new Date(Number(año), Number(mes) - 1, 1);
+        filasPorMes[claveMes] = {
+          claveMes,
+          mes: fechaMes.toLocaleDateString("es-CL", { month: "long", year: "numeric" }),
+          montosPorSucursal: Object.fromEntries(sucursales.map((sucursal) => [sucursal, 0]))
+        };
+      }
+      if (Object.prototype.hasOwnProperty.call(filasPorMes[claveMes].montosPorSucursal, venta.sucursal)) {
+        filasPorMes[claveMes].montosPorSucursal[venta.sucursal] += Number(venta.total) || 0;
+      }
+    });
+    return Object.values(filasPorMes).sort((a, b) => b.claveMes.localeCompare(a.claveMes));
+  }, [ventasRaw, sucursales]);
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (e) => {
@@ -435,12 +455,18 @@ function App() {
               {subVista === "historial" && (
                 <section className="history-comparative">
                   <div className="filters-bar card">
-                    <div className="filter-item"><label>Sucursal</label><select value={filtroSucursal} onChange={(e) => setFiltroSucursal(e.target.value)}><option value="">Todas las sucursales</option>{sucursales.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
-                    <div className="filter-item"><label>Rango</label><div className="toggle-filters"><button className={filtroUltimos10 ? "active" : ""} onClick={() => setFiltroUltimos10(true)}>Últimos 10 días</button><button className={!filtroUltimos10 ? "active" : ""} onClick={() => setFiltroUltimos10(false)}>Ver todos</button></div></div>
+                    {modoHistorial !== "meses" && (
+                      <div className="filter-item"><label>Sucursal</label><select value={filtroSucursal} onChange={(e) => setFiltroSucursal(e.target.value)}><option value="">Todas las sucursales</option>{sucursales.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+                    )}
+                    <div className="filter-item"><label>Rango</label><div className="toggle-filters"><button type="button" className={modoHistorial === "ultimos10" ? "active" : ""} onClick={() => setModoHistorial("ultimos10")}>Últimos 10 días</button><button type="button" className={modoHistorial === "todos" ? "active" : ""} onClick={() => setModoHistorial("todos")}>Ver todos</button><button type="button" className={modoHistorial === "meses" ? "active" : ""} onClick={() => setModoHistorial("meses")}>Meses</button></div></div>
                   </div>
-                  <div className="table-responsive-container card"><table className="comparative-table"><thead><tr><th>Fecha</th>{sucursales.map(s => <th key={s}>{s}</th>)}<th className="col-total">Total Día</th></tr></thead><tbody>{historialComparativo.map(fila => { const canExpand = filtroSucursal !== ""; const isExpanded = canExpand && expandedId === fila.fecha; return (<React.Fragment key={fila.fecha}><tr><td className={`cell-date ${canExpand ? 'clickable' : ''}`} onClick={() => canExpand && setExpandedId(isExpanded ? null : fila.fecha)}>{fila.fecha}</td>{sucursales.map(s => (<td key={s} className="cell-amount">{fila.montosPorSucursal[s] ? `$${fila.montosPorSucursal[s].toLocaleString("es-CL")}` : "-"}</td>))}<td className="cell-total-dia">${fila.totalDia.toLocaleString("es-CL")}</td></tr>{isExpanded && fila.registrosPorSucursal[filtroSucursal] && (
-                                <tr className="detail-row"><td colSpan={sucursales.length + 2}><div className="table-detail-content"><div className="detail-header-mini">Desglose de {filtroSucursal} - {fila.fecha}</div><div className="detail-items-grid">{fila.registrosPorSucursal[filtroSucursal].map(reg => (<div key={reg.id} className="detail-item-pill"><span className="pill-type">{reg.tipo}</span><span className="pill-amount">${Number(reg.total).toLocaleString("es-CL")}</span><button onClick={() => eliminarRegistro(reg.id)} className="btn-delete-x">×</button></div>))}</div></div></td></tr>
-                              )}</React.Fragment>); })}</tbody></table></div>
+                  {modoHistorial === "meses" ? (
+                    <div className="table-responsive-container card"><table className="comparative-table"><thead><tr><th>Mes</th>{sucursales.map(s => <th key={s}>{s}</th>)}</tr></thead><tbody>{historialMensual.map(fila => <tr key={fila.claveMes}><td className="cell-date">{fila.mes}</td>{sucursales.map(s => <td key={s} className="cell-amount">${(fila.montosPorSucursal[s] || 0).toLocaleString("es-CL")}</td>)}</tr>)}</tbody></table></div>
+                  ) : (
+                    <div className="table-responsive-container card"><table className="comparative-table"><thead><tr><th>Fecha</th>{sucursales.map(s => <th key={s}>{s}</th>)}<th className="col-total">Total Día</th></tr></thead><tbody>{historialComparativo.map(fila => { const canExpand = filtroSucursal !== ""; const isExpanded = canExpand && expandedId === fila.fecha; return (<React.Fragment key={fila.fecha}><tr><td className={`cell-date ${canExpand ? 'clickable' : ''}`} onClick={() => canExpand && setExpandedId(isExpanded ? null : fila.fecha)}>{fila.fecha}</td>{sucursales.map(s => (<td key={s} className="cell-amount">{fila.montosPorSucursal[s] ? `$${fila.montosPorSucursal[s].toLocaleString("es-CL")}` : "-"}</td>))}<td className="cell-total-dia">${fila.totalDia.toLocaleString("es-CL")}</td></tr>{isExpanded && fila.registrosPorSucursal[filtroSucursal] && (
+                                  <tr className="detail-row"><td colSpan={sucursales.length + 2}><div className="table-detail-content"><div className="detail-header-mini">Desglose de {filtroSucursal} - {fila.fecha}</div><div className="detail-items-grid">{fila.registrosPorSucursal[filtroSucursal].map(reg => (<div key={reg.id} className="detail-item-pill"><span className="pill-type">{reg.tipo}</span><span className="pill-amount">${Number(reg.total).toLocaleString("es-CL")}</span><button onClick={() => eliminarRegistro(reg.id)} className="btn-delete-x">×</button></div>))}</div></div></td></tr>
+                                )}</React.Fragment>); })}</tbody></table></div>
+                  )}
                 </section>
               )}
               {subVista === "metricas" && (
